@@ -3,4 +3,4 @@
 Phase 1a scope: four read-only tools over the filesystem. No vectors,
 no SQLite, no writes. See the specification document for the full plan.
 """
-__version__ = "0.27.6"
+__version__ = "0.27.7"
