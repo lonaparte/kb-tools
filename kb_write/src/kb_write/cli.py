@@ -111,6 +111,7 @@ def _parser() -> argparse.ArgumentParser:
     _add_doctor_cmd(sub)
     _add_re_summarize_cmd(sub)
     _add_re_read_cmd(sub)
+    _add_migrate_legacy_chapters_cmd(sub)
 
     return p
 
@@ -976,6 +977,45 @@ def _emit_result(args, ctx, result):
         print(f"    git:   {result.git_sha[:12]}")
     if result.reindexed:
         print(f"    reindex: ok")
+
+
+# ---------- migrate-legacy-chapters ----------
+def _add_migrate_legacy_chapters_cmd(sub):
+    p = sub.add_parser(
+        "migrate-legacy-chapters",
+        help=(
+            "One-shot migration of v25-style longform chapters "
+            "from thoughts/<date>-<KEY>-ch<NN>-*.md to the v26 "
+            "canonical location papers/<KEY>-chNN.md. Idempotent: "
+            "re-running skips chapters already migrated. Preserves "
+            "body content verbatim — no LLM call. Use `--dry-run` "
+            "to preview the move plan."
+        ),
+    )
+    p.add_argument(
+        "--dry-run", action="store_true",
+        help=(
+            "List the migration plan without touching any files. "
+            "Disjoint from the global --dry-run flag (which would "
+            "still run audit/git — this flag skips ALL filesystem "
+            "writes)."
+        ),
+    )
+    p.set_defaults(func=_cmd_migrate_legacy_chapters)
+
+
+def _cmd_migrate_legacy_chapters(args, ctx):
+    from .ops.migrate_chapters import (
+        migrate_legacy_chapters, format_report,
+    )
+    report = migrate_legacy_chapters(ctx, dry_run=args.dry_run)
+    print(format_report(report))
+    # Non-zero exit when there were errors or unresolved collisions
+    # so cron wrappers can alarm. Actual skipped-already-done is a
+    # normal outcome (idempotent re-run) → rc=0.
+    if report.errors or report.skipped_collision:
+        return 1
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
