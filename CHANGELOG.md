@@ -5,12 +5,195 @@ All notable changes to ee-kb-tools.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is our own (calendar-ish, per-major-iteration).
 
-## [v27] — 2026-04
+## [0.27.1] — 2026-04
 
-Security / release-hygiene follow-up to v26. Addresses a third-party
-code review's findings around host-metadata leakage, CLI path
-semantics, and HTTP rate-limit handling. Core data model (schema v6,
-36 MCP tools, 7 selectors, events.jsonl) is unchanged.
+Second bug-fix pass on the v0.27 line, responding to a second
+round of field testing on a 1154-paper library. Adds three test-
+coverage improvements (static schema FK lint, broadened
+`test_report_generation` for real libraries, re-summarize
+classifier regression suite) plus one event-classification fix.
+
+**Versioning note.** This release introduces proper 0.x.y
+semver. Previous releases shipped with mixed version strings
+(`VERSION=27`, package `__version__="27"`, pyproject
+`version="0.1.0"`). All five packages now ship coordinated at
+`0.27.1`. Releases will be `0.x.y` until the KB spec and MCP
+tool surface stabilise enough to warrant a `1.0.0`.
+
+### Fixed
+
+- **`re-summarize` failure classifier sent too many events to
+  `skip_llm_error`.** Two v26.5 field-report cases:
+  (a) `"paper md not found: papers/NOT_A_REAL_KEY.md"` — user
+      typo / bad argument, LLM never called, but classified as
+      an LLM failure; (b) `"no zotero_attachment_keys in
+      frontmatter — cannot locate the PDF"` — PDF-locate
+      failure, but the classifier's substring match required
+      "missing" / "not found" / "no pdf" and missed the phrase
+      "cannot locate".
+  Fixes: (1) a new `skip_bad_target` category for
+  user-error / missing-md cases (LLM never reached);
+  (2) broader substring patterns for PDF-locate failures;
+  (3) `.code=` attributes on the raise sites so classification
+  doesn't depend on substring matching at all for well-known
+  modes. Locked by
+  `tests/unit/test_re_summarize_classifier.py`.
+
+### Test infrastructure
+
+- **`scripts/test_e2e.py` gains a static schema-FK lint.**
+  `test_schema_fk_targets_are_pk_or_unique` parses
+  `schema.sql`, collects PK / UNIQUE columns on `papers`, and
+  asserts every `REFERENCES papers(<col>)` targets one of
+  them. This lint would have caught the v26 FK bug (four
+  side-tables pointing at `papers(zotero_key)` after the v6 PK
+  change); it was missing because the existing
+  `test_sql_joins_use_paper_key` test only scanned `.py` files.
+- **`test_schema_accepts_upsert_with_fk_on` added.** Reproduces
+  the v26 FK failure pathway end-to-end: `PRAGMA
+  foreign_keys=ON` + `INSERT ... ON CONFLICT(paper_key) DO
+  UPDATE SET zotero_key = ...` (the indexer's real call
+  shape). The pre-existing `test_book_chapter_schema` only
+  used raw INSERT with FK checks disabled; the v26 bug was
+  invisible to it.
+- **`test_report_generation` orphans assertion broadened.** The
+  section has four legitimate output shapes (including "found
+  N orphans" — which the field-test library triggered with
+  1218 archived attachments); v26 only covered three, so
+  realistic libraries failed the test. Added the fourth.
+
+### Known residual items (v0.28 scope)
+
+The v26.5 field report flagged several items that are logged
+here but deferred:
+
+- **`index-status --deep` flags 182 legacy chapter-in-thoughts
+  mds but offers no `--fix`.** These are pre-v24 long-article
+  chapters that belong in `papers/<KEY>-chNN.md` (v26 layout)
+  but still sit in `thoughts/<date>-<KEY>-ch<NN>-*.md`. A
+  `kb-write migrate-legacy-chapters` tool is the right
+  solution but hasn't been written — for now the check is
+  informational only.
+- **`kb-write doctor` reports 182 `[slug]` warnings for the
+  same legacy chapters**; same fix as above (no `--fix` yet).
+- **`kb-importer check-orphans` makes 2 full Zotero API round
+  trips (~45s on 1154 items) every call.** No cache / no
+  incremental mode — each invocation is a fresh fetch. A
+  `--since <ts>` flag or a 5-minute in-memory cache would
+  mostly eliminate the wait.
+- **`kb-importer --dry-run sync` position.** argparse accepts
+  `--dry-run` only BEFORE the subcommand, whereas `kb-mcp`
+  accepts it after. Cross-CLI consistency fix, low priority.
+
+## [0.27.0] — 2026-04
+
+Security / release-hygiene follow-up to v26 PLUS critical bug-fix
+pass from a v26 production deployment field report. Addresses:
+
+- v26 field-test bugs blocking 100% of library indexing / re-
+  summarize / re-read-from-storage (four bugs, three of them hit
+  1154/1154 papers in the reporter's library)
+- a third-party code review's findings around host-metadata
+  leakage, CLI path semantics, and HTTP rate-limit handling
+- two items from the v25 review that were still live in v26
+
+Schema version bumps v6 → v7 (foreign-key fix — existing DBs
+drop-and-rebuild automatically on first v27 startup). MCP tool
+count, selectors, events.jsonl structure unchanged.
+
+### Critical v26 field-report fixes
+
+These four bugs were reported after v26 hit a real 1154-paper
+library. Each made a top-level workflow unusable until the user
+hand-patched the code. Listed by severity.
+
+1. **Schema v6 foreign-key mismatch (BLOCKING).** `papers.paper_key`
+   is the PK since v6's book-chapter rework; `zotero_key` is an
+   indexed-but-non-unique column. But four side-table FKs
+   (`paper_attachments`, `paper_tags`, `paper_collections`,
+   `paper_chunk_meta`) were still written as
+   `REFERENCES papers(zotero_key)` — which SQLite refuses with
+   "foreign key mismatch" when `PRAGMA foreign_keys=ON`, because
+   FK targets must be PK or UNIQUE. The entire indexer would
+   crash on every INSERT. v27 repoints all four FKs to
+   `papers(paper_key)` and bumps the schema version 6 → 7 so
+   existing v6 DBs with the broken FK state get automatically
+   rebuilt on first v7 startup (no manual `rm index.sqlite`
+   required). Locked by three regression tests in
+   `tests/unit/test_schema_fk.py` that apply the real schema,
+   enable `PRAGMA foreign_keys=ON`, and exercise all four side
+   tables + CASCADE semantics.
+
+2. **`re-summarize` found 0/N attachments on any real library.**
+   `_extract_frontmatter_list` parsed block-form lists with
+   hardcoded 2-space indent (`  - KEY`), but PyYAML's default
+   dump — which `python-frontmatter` uses — emits 0-indent
+   (`- KEY`). Every kb-importer-written md therefore looked like
+   it had empty `zotero_attachment_keys`, and `re-summarize`
+   refused every paper with "no zotero_attachment_keys in
+   frontmatter — cannot locate the PDF". Same bug affected
+   `authors` parsing, which silently omitted author context
+   from the re-summarize LLM prompt.
+
+3. **`re-read --source storage` returned 0 on any real library.**
+   Mirror image of bug 2: `_FM_ATTACHMENT_FLOW_RE` in
+   `re_read_sources.py` matched ONLY flow-form
+   (`key: [a, b, c]`) — but real mds are all block-form. Zero
+   hits on any paper.
+
+   Fixes 2 and 3 are consolidated into a single new parser
+   `kb_core.frontmatter.extract_list` that handles flow AND
+   block (0-indent AND 2-indent), stops at the next top-level
+   key, strips one layer of quotes. Both `kb_importer` and
+   `kb_write` delegate to it. Locked by 14 cases in
+   `tests/unit/test_frontmatter.py`, including the exact real-
+   world shape observed in the field report.
+
+4. **ZIP filename vs VERSION inconsistency.** v26 shipped as
+   `12-codes-ee-kb-tools-v26.zip`, but the reporter received
+   what they believed was a re-uploaded v26 but was actually a
+   newer build — they renamed to `v26.5` manually to track it.
+   From v27 onward, release ZIPs carry version-incrementing
+   filenames (`13-...-v27.zip`, `14-...-v27.1.zip`, etc.) and
+   never repeat.
+
+### CLI breaking changes (called out in review)
+
+- **`kb-write thought create/update` / `kb-write topic
+  create/update` / `kb-write paper body append/replace` no
+  longer accept `--body <str>`.** All take `--body-file
+  <path|->` instead. Passing `-` reads from stdin.
+
+  The field report (v26.5) flagged this as a silent breaking
+  change from v24. Rationale for the change (not previously
+  documented): shell-quoting of multi-line / Unicode content
+  is fragile, and agents that shell out to `kb-write` end up
+  producing malformed commands with embedded newlines /
+  quotes. The stdin / file-only path is unambiguous and safe
+  for both interactive users and agent orchestrators.
+
+  **Migration:** any v24-or-earlier script using `--body "..."`
+  needs to pipe through stdin:
+  ```bash
+  # Before (v24)
+  kb-write thought create --title X --body "my idea"
+
+  # After (v25+)
+  echo "my idea" | kb-write thought create --title X --body-file -
+  ```
+  Sorry for surfacing this change late — it should have been
+  in v25's release notes when it landed.
+
+### UX improvements (from v26.5 field report)
+
+- **`kb-mcp report` / MCP `kb_report` default sections no longer
+  include `orphans`.** Field-report observation: the orphan
+  detector does a live Zotero API scan (1200+ round-trips for a
+  real library), which surprised users who expected an offline
+  "quick status" command. New default set is
+  `ops, skip, re_read, re_summarize`. Request orphans
+  explicitly with `--sections ops,skip,orphans` or
+  `--sections all` when you want it.
 
 ### Security / information-disclosure
 
@@ -48,7 +231,7 @@ and output drift. All five are addressed in this release:
    `safe_resolve`, `to_relative`), KB directory layout constants
    (`PAPERS_DIR` etc.), node addressing (`NodeAddress`,
    `parse_target`, `from_md_path`), schema version constants
-   (`SCHEMA_VERSION = 6`, `FULLTEXT_START/END`, `SECTION_COUNT`),
+   (`SCHEMA_VERSION = 7`, `FULLTEXT_START/END`, `SECTION_COUNT`),
    and workspace resolution (`Workspace`, `resolve_workspace`,
    `find_workspace_root`) now live in a new bottom-of-stack
    package with zero runtime deps. `kb_write.paths` /
@@ -191,9 +374,15 @@ These are on the record for v28:
   tag ops as append-only journal that dedupes on read. Both are
   scope for a v28 design pass.
 - **MCP stdio long-session memory (v25 item 4).** Still not
-  profiled. Needs a long-running session under `tracemalloc` to
-  locate the growth; can't be fixed by inspection alone. v28
-  scope.
+  profiled. v26.5 field report confirms ~+24 MB RSS per 90
+  tool calls, essentially unchanged from v22 measurements —
+  the shape suggests bounded-per-call allocation that isn't
+  being released, not an unbounded cache. Candidates are
+  SQLite statement cache growth, LLM/embedding response
+  objects retained in module-level state, or the MCP server's
+  request-history buffer. Needs a long-running session under
+  `tracemalloc` to locate; can't be fixed by inspection alone.
+  Hard-scheduled for v28.
 - **MCP parameter name alignment (`target` vs `md_path`) (v25
   item 6).** A breaking-ish API change — the current surface
   has both names across different tools. Cleanup belongs with

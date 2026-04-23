@@ -458,8 +458,13 @@ SECTION_REGISTRY: dict[str, Callable] = {
 # Order reflects "what's most useful at a glance":
 #   - ops first: "what did I do with my library this month"
 #   - skip / re_read / re_summarize: what failed / what got touched
-#   - orphans last: live scan, slowest, least-frequent payoff
-DEFAULT_SECTIONS = ("ops", "skip", "re_read", "re_summarize", "orphans")
+#
+# `orphans` is NOT in the default set since v27 — it does a live
+# Zotero API scan (1200+ round-trips on a real library) which
+# surprises users who expected an offline-ish "quick status"
+# command. Request explicitly with `--sections ops,skip,orphans`
+# or `--sections all` when you want the orphan check.
+DEFAULT_SECTIONS = ("ops", "skip", "re_read", "re_summarize")
 
 
 # ---------------------------------------------------------------------

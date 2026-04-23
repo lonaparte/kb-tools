@@ -4,6 +4,13 @@ Four Python packages that implement the `ee-kb` personal
 knowledge-base system. They communicate through the shared markdown
 format on disk and (optionally) the SQLite projection inside the KB.
 
+> **Deploying for the first time?** Read [`DEPLOYMENT.md`](DEPLOYMENT.md).
+> It's the "turn this cloned repo into a working local install"
+> walkthrough, written explicitly enough for an LLM agent to
+> follow on the user's behalf. Short version: `./scripts/deploy.sh
+> <your-workspace-parent>` does the mechanical parts; you still
+> need to configure API keys and Zotero source mode afterwards.
+
 ```
                        ┌─ live mode: localhost:23119 (Zotero running)
 Zotero metadata ───────┤

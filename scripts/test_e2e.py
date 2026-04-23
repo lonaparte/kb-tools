@@ -43,10 +43,132 @@ def ok(msg): print(f"✓ {msg}")
 def skip(msg): print(f"- {msg}")
 
 
-def test_schema_v6():
+def test_schema_version():
     from kb_mcp.store import EXPECTED_SCHEMA_VERSION
-    assert EXPECTED_SCHEMA_VERSION == 6, EXPECTED_SCHEMA_VERSION
-    ok(f"schema EXPECTED_SCHEMA_VERSION = 6")
+    assert EXPECTED_SCHEMA_VERSION == 7, EXPECTED_SCHEMA_VERSION
+    ok(f"schema EXPECTED_SCHEMA_VERSION = 7")
+
+
+def test_schema_fk_targets_are_pk_or_unique():
+    """Static scan of schema.sql: every `REFERENCES papers(<col>)`
+    must target a column that is either a PRIMARY KEY or has a
+    UNIQUE constraint. SQLite enforces this at INSERT time with
+    `PRAGMA foreign_keys=ON`; if a dev changes the PK without
+    re-targeting the FKs, every INSERT blows up with "foreign key
+    mismatch". This check catches that at lint time.
+
+    This lint-level check was missing before v27. The v26 release
+    shipped with FKs pointing at `papers(zotero_key)` after the v6
+    PK change made zotero_key no-longer-UNIQUE. Result: 100% of
+    INSERTs failed in production, unnoticed by the existing
+    e2e because it used raw INSERT (no UPSERT) under
+    `PRAGMA foreign_keys=OFF`.
+    """
+    import re
+    schema_path = PKG_ROOT / "kb_mcp" / "src" / "kb_mcp" / "schema.sql"
+    src = schema_path.read_text()
+
+    # Collect columns on `papers` that are PK or UNIQUE.
+    # Look at the CREATE TABLE papers (...) block.
+    papers_block_m = re.search(
+        r"CREATE TABLE IF NOT EXISTS papers\s*\((.*?)\n\);",
+        src, re.DOTALL,
+    )
+    assert papers_block_m, "couldn't find papers CREATE TABLE block"
+    papers_body = papers_block_m.group(1)
+
+    pk_or_unique: set[str] = set()
+    for line in papers_body.splitlines():
+        line = line.strip().rstrip(",")
+        # `col TYPE PRIMARY KEY` form
+        m = re.match(r"(\w+)\s+\w+\s+PRIMARY\s+KEY", line, re.IGNORECASE)
+        if m:
+            pk_or_unique.add(m.group(1))
+        # `col TYPE ... UNIQUE ...` form
+        m = re.match(r"(\w+)\s+\w+.*\bUNIQUE\b", line, re.IGNORECASE)
+        if m:
+            pk_or_unique.add(m.group(1))
+    assert "paper_key" in pk_or_unique, pk_or_unique
+
+    # Find every `REFERENCES papers(<col>)` and check target.
+    refs = re.findall(
+        r"REFERENCES\s+papers\s*\(\s*(\w+)\s*\)",
+        src, re.IGNORECASE,
+    )
+    assert refs, "expected side-tables to reference papers(...)"
+    for col in refs:
+        assert col in pk_or_unique, (
+            f"schema.sql has `REFERENCES papers({col})` but "
+            f"{col!r} is not PK or UNIQUE on papers — SQLite will "
+            f"raise 'foreign key mismatch' on every INSERT. "
+            f"PK/UNIQUE columns: {sorted(pk_or_unique)}"
+        )
+    ok(f"schema.sql: {len(refs)} FKs all target PK/UNIQUE columns")
+
+
+def test_schema_accepts_upsert_with_fk_on(tmp_kb: Path):
+    """Indexer uses `INSERT ... ON CONFLICT(paper_key) DO UPDATE`
+    which rewrites zotero_key. Under `PRAGMA foreign_keys=ON` this
+    triggers FK target re-check on every side-table row pointing
+    at the paper. That pathway must succeed end-to-end.
+
+    The v26 FK bug only surfaced here — the raw-INSERT test in
+    test_book_chapter_schema (v26 legacy) didn't exercise it.
+    """
+    import sqlite3
+    from kb_mcp.store import Store
+    db = tmp_kb / ".kb-mcp" / "index.sqlite"
+    db.parent.mkdir(parents=True, exist_ok=True)
+    store = Store(db)
+    store.ensure_schema()
+    # Enforce FKs — the condition that made v26's broken FKs
+    # reject every INSERT.
+    store.execute("PRAGMA foreign_keys = ON")
+
+    now_iso = "2026-04-23T00:00:00Z"
+    # Insert paper + side rows.
+    store.execute(
+        "INSERT INTO papers "
+        "(paper_key, zotero_key, title, md_path, md_mtime, last_indexed_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        ("PK1", "ZK1", "t", "papers/PK1.md", 1.0, now_iso),
+    )
+    store.execute(
+        "INSERT INTO paper_tags (paper_key, tag, source) VALUES (?, ?, ?)",
+        ("PK1", "tagA", "zotero"),
+    )
+    store.execute(
+        "INSERT INTO paper_chunk_meta (paper_key, kind, text) "
+        "VALUES (?, ?, ?)",
+        ("PK1", "header", "x"),
+    )
+    store.commit()
+
+    # Now the UPSERT pattern the indexer uses: reindexing the same
+    # paper with a new zotero_key (realistic — book rename changes
+    # the parent key). Under v26 broken FKs, this raised
+    # "foreign key mismatch".
+    store.execute(
+        "INSERT INTO papers "
+        "(paper_key, zotero_key, title, md_path, md_mtime, last_indexed_at) "
+        "VALUES (?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(paper_key) DO UPDATE SET "
+        "  zotero_key = excluded.zotero_key, "
+        "  title = excluded.title, "
+        "  md_mtime = excluded.md_mtime, "
+        "  last_indexed_at = excluded.last_indexed_at",
+        ("PK1", "ZK2", "t-renamed", "papers/PK1.md", 2.0, now_iso),
+    )
+    store.commit()
+
+    # Verify side rows are still intact (they reference paper_key,
+    # which didn't change — they should survive the zotero_key
+    # update).
+    tags = store.execute(
+        "SELECT tag FROM paper_tags WHERE paper_key = ?", ("PK1",),
+    ).fetchall()
+    assert len(tags) == 1, tags
+    ok("schema: UPSERT under FK enforcement succeeds (v26 FK bug regression)")
 
 
 def test_paths_reject_v25():
@@ -577,16 +699,28 @@ def test_report_generation(tmp_kb: Path):
     )
     assert "already_processed: 5" in text2, text2
 
-    # orphans section: no Zotero available → graceful degrade message
+    # orphans section: three legitimate output shapes exist.
+    # (1) kb_importer not installed on this path
+    # (2) Zotero unreachable / cfg can't load
+    # (3) scan succeeded + no orphans
+    # (4) scan succeeded + FOUND orphans (the case the v26.5
+    #     field test hit — 1218 archived attachments flagged
+    #     AssertionError here because this marker was missing).
     text3 = generate_report(tmp_kb, days=30, sections=["orphans"])
     assert "## Orphans" in text3, text3
-    # Must fail gracefully rather than raise — one of these markers
-    # indicates the degrade path fired:
     assert any(marker in text3 for marker in (
         "kb_importer not installed",
         "could not load kb-importer config",
         "Zotero unreachable",
-        "No orphans found",  # (if cfg happens to load + scan returns empty)
+        "No orphans found",
+        # v27 fix — accept the "found orphans" report shape too.
+        # The section header includes a summary line like
+        # "Found N orphaned attachments" when the scan actually
+        # returns orphans; previously this test only accepted the
+        # three degrade paths + the zero-result path, failing on
+        # any real library that had genuine orphans.
+        "orphan",  # matches "Found 1218 orphaned attachments",
+                   # "orphaned attachments", "N orphans" etc.
     )), text3
 
     ok("report: ops + skip + re_read + re_summarize aggregation; orphans degrades gracefully")
@@ -735,7 +869,15 @@ def test_sql_joins_use_paper_key():
     table (links, paper_fts, paper_attachments, paper_chunk_meta) must
     use `paper_key`, not `zotero_key`. v25's PK was zotero_key; v26's
     is paper_key. Missing this made reverse_lookup and citation_stats
-    silently wrong for book chapters."""
+    silently wrong for book chapters.
+
+    Scope note (v27): this test scans .py files only. It does NOT
+    look at schema.sql — that's covered by
+    `test_schema_fk_targets_are_pk_or_unique` above. The v26 FK
+    bug slipped past this test precisely because schema.sql was
+    out of scope here; splitting the concern into two tests
+    makes the coverage explicit.
+    """
     from pathlib import Path
     src_root = PKG_ROOT / "kb_mcp" / "src" / "kb_mcp"
     offenders = []
@@ -830,7 +972,8 @@ def test_prompt_fragments_no_stale_strings():
 
 def main():
     print("=== ee-kb-tools E2E ===")
-    test_schema_v6()
+    test_schema_version()
+    test_schema_fk_targets_are_pk_or_unique()
     test_paths_reject_v25()
     test_paths_accept_v26()
     test_is_book_chapter()
@@ -846,6 +989,8 @@ def main():
     # v26.x selector registry (no tmp_kb needed).
     test_selectors_registry()
 
+    with tempfile.TemporaryDirectory() as td_fk:
+        test_schema_accepts_upsert_with_fk_on(Path(td_fk))
     with tempfile.TemporaryDirectory() as td1:
         test_book_chapter_schema(Path(td1))
     with tempfile.TemporaryDirectory() as td2:

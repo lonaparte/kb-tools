@@ -109,14 +109,23 @@ CREATE TABLE IF NOT EXISTS thoughts (
 -- for the frontmatter grep in kb-importer set-summary's hint logic.
 CREATE TABLE IF NOT EXISTS paper_attachments (
     attachment_key TEXT PRIMARY KEY,
-    paper_key TEXT NOT NULL REFERENCES papers(zotero_key) ON DELETE CASCADE,
+    -- v27 fix (was v6 bug): target papers(paper_key), NOT
+    -- papers(zotero_key). papers.paper_key is the PK; zotero_key
+    -- is a non-unique index column since v6 (book chapters share
+    -- a zotero_key across multiple paper_key rows). Targeting
+    -- zotero_key in a FK triggers SQLite's "foreign key mismatch"
+    -- on every INSERT because SQLite requires FK targets to be
+    -- PK or UNIQUE. v6 shipped with this broken across four side
+    -- tables; v27 repoints all four to paper_key.
+    paper_key TEXT NOT NULL REFERENCES papers(paper_key) ON DELETE CASCADE,
     is_main INTEGER NOT NULL DEFAULT 0,
     position INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_paper_att_paper ON paper_attachments(paper_key);
 
 CREATE TABLE IF NOT EXISTS paper_tags (
-    paper_key TEXT NOT NULL REFERENCES papers(zotero_key) ON DELETE CASCADE,
+    -- v27 fix: see paper_attachments FK comment.
+    paper_key TEXT NOT NULL REFERENCES papers(paper_key) ON DELETE CASCADE,
     tag TEXT NOT NULL,
     source TEXT NOT NULL CHECK (source IN ('zotero', 'kb')),
     PRIMARY KEY (paper_key, tag, source)
@@ -124,7 +133,8 @@ CREATE TABLE IF NOT EXISTS paper_tags (
 CREATE INDEX IF NOT EXISTS idx_paper_tags_tag ON paper_tags(tag);
 
 CREATE TABLE IF NOT EXISTS paper_collections (
-    paper_key TEXT NOT NULL REFERENCES papers(zotero_key) ON DELETE CASCADE,
+    -- v27 fix: see paper_attachments FK comment.
+    paper_key TEXT NOT NULL REFERENCES papers(paper_key) ON DELETE CASCADE,
     collection_name TEXT NOT NULL,
     PRIMARY KEY (paper_key, collection_name)
 );
@@ -149,7 +159,8 @@ CREATE VIRTUAL TABLE IF NOT EXISTS paper_fts USING fts5(
 -- the embedding; we JOIN on chunk_id for text + metadata.
 CREATE TABLE IF NOT EXISTS paper_chunk_meta (
     chunk_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    paper_key TEXT NOT NULL REFERENCES papers(zotero_key) ON DELETE CASCADE,
+    -- v27 fix: see paper_attachments FK comment.
+    paper_key TEXT NOT NULL REFERENCES papers(paper_key) ON DELETE CASCADE,
     kind TEXT NOT NULL,            -- "header" | "section"
     section_num INTEGER,           -- 1..7 for section chunks, NULL for header
     section_title TEXT,            -- e.g. "1. 论文的主要内容" or NULL

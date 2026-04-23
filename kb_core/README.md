@@ -17,7 +17,7 @@ agree on:
   that accepts a user-provided path.
 - **Workspace autodetect** — walking up from the current directory
   to find the `.ee-kb-tools/` sibling of `ee-kb/`.
-- **Schema / format version constants** — `SCHEMA_VERSION = 6`,
+- **Schema / format version constants** — `SCHEMA_VERSION = 7`,
   events file name, audit file name, fulltext marker strings.
 
 ## Non-scope (strictly)

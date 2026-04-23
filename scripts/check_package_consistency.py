@@ -37,12 +37,14 @@ REPO = Path(__file__).resolve().parent.parent
 
 
 def check_versions() -> list[str]:
-    """VERSION file must match __version__ in the 4 bundle packages.
+    """VERSION file must match __version__ in all five packages
+    including kb_core.
 
-    kb_core is NOT checked against VERSION — it has its own semver
-    (0.1.0 currently) that ticks independently because its API is
-    much more stable than the bundle's feature additions. A kb_core
-    version bump is a cross-bundle coordination event.
+    v27: 0.x.y semver alignment — all five packages (kb_core and
+    the four bundle packages) ship coordinated. Earlier releases
+    treated kb_core's version as independently-ticking; in
+    practice it's coupled to the bundle's release cadence, so we
+    pin them together.
     """
     errors: list[str] = []
     version_file = REPO / "VERSION"
@@ -53,6 +55,7 @@ def check_versions() -> list[str]:
         return ["VERSION file is empty"]
 
     packages = [
+        "kb_core/src/kb_core/__init__.py",
         "kb_importer/src/kb_importer/__init__.py",
         "kb_mcp/src/kb_mcp/__init__.py",
         "kb_write/src/kb_write/__init__.py",
@@ -71,6 +74,30 @@ def check_versions() -> list[str]:
         if m.group(1) != canonical:
             errors.append(
                 f"{pkg}: __version__ = {m.group(1)!r} "
+                f"≠ VERSION = {canonical!r}"
+            )
+
+    # Also check pyproject.toml versions are synced.
+    pyprojects = [
+        "kb_core/pyproject.toml",
+        "kb_importer/pyproject.toml",
+        "kb_mcp/pyproject.toml",
+        "kb_write/pyproject.toml",
+        "kb_citations/pyproject.toml",
+    ]
+    pp_pattern = re.compile(r'^version\s*=\s*"([^"]+)"', re.MULTILINE)
+    for pp in pyprojects:
+        p = REPO / pp
+        if not p.exists():
+            errors.append(f"{pp}: file missing")
+            continue
+        m = pp_pattern.search(p.read_text())
+        if not m:
+            errors.append(f"{pp}: no version = \"...\" found")
+            continue
+        if m.group(1) != canonical:
+            errors.append(
+                f"{pp}: version = {m.group(1)!r} "
                 f"≠ VERSION = {canonical!r}"
             )
     return errors
@@ -384,7 +411,7 @@ def main() -> int:
     # Read VERSION for the success message.
     v = (REPO / "VERSION").read_text().strip()
     print(
-        f"✓ package consistency OK (VERSION=v{v}, kb_core shim identity, "
+        f"✓ package consistency OK (VERSION={v}, kb_core shim identity, "
         f"agent-rules parity, fulltext-markers parity)"
     )
     return 0

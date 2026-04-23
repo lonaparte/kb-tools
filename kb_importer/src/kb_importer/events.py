@@ -129,11 +129,17 @@ RE_SUMMARIZE_SKIP_MTIME    = "skip_mtime_conflict"
 RE_SUMMARIZE_SKIP_LLM      = "skip_llm_error"
 RE_SUMMARIZE_SKIP_PDF      = "skip_pdf_missing"
 RE_SUMMARIZE_SKIP_NOT_PROCESSED = "skip_not_processed"
+# v27 addition: user-error cases that failed BEFORE any LLM call.
+# Previously these silently fell through to skip_llm_error, which
+# made the daily report misleading ("LLM had 8 failures" when
+# really the user typed a wrong paper key 8 times).
+RE_SUMMARIZE_SKIP_BAD_TARGET    = "skip_bad_target"    # md path doesn't resolve / paper doesn't exist
 
 _ALLOWED_RE_SUMMARIZE_CATEGORIES = {
     RE_SUMMARIZE_SUCCESS, RE_SUMMARIZE_NO_CHANGE,
     RE_SUMMARIZE_SKIP_MTIME, RE_SUMMARIZE_SKIP_LLM,
     RE_SUMMARIZE_SKIP_PDF, RE_SUMMARIZE_SKIP_NOT_PROCESSED,
+    RE_SUMMARIZE_SKIP_BAD_TARGET,
 }
 
 

@@ -312,38 +312,30 @@ def _extract_frontmatter_field(md_text: str, key: str) -> str | None:
 
 
 def _extract_frontmatter_list(md_text: str, key: str) -> list[str]:
-    """Parse a YAML list scalar (flow-form `key: [a, b, c]` or block
-    form). Minimal, matches kb-importer's write style."""
+    """Parse a YAML list scalar (flow-form `key: [a, b, c]` or
+    block form) from the frontmatter at the top of `md_text`.
+
+    v27: delegates to kb_core.frontmatter.extract_list so the
+    parsing rules (especially block-form indent handling) stay
+    in lockstep with kb_write/ops/re_read_sources, which uses
+    the same parser. Prior versions had two divergent regex-
+    based copies, each with a DIFFERENT bug:
+
+    - This module only matched block items indented `  - ` (2
+      spaces). PyYAML's default dump writes `- ` (0 indent), so
+      100% of real papers' attachment keys went unparsed, and
+      re-summarize refused every paper with "no
+      zotero_attachment_keys in frontmatter".
+    - re_read_sources matched only the flow form `key: [a, b]`,
+      missing the block form entirely.
+
+    Both are fixed by centralising the parser in kb_core.
+    """
     if not md_text.startswith("---\n"):
         return []
     end = md_text.find("\n---\n", 4)
     if end < 0:
         return []
     header = md_text[4:end]
-    # Try flow form first.
-    for line in header.splitlines():
-        s = line.strip()
-        if s.startswith(f"{key}:"):
-            rest = s.split(":", 1)[1].strip()
-            if rest.startswith("[") and rest.endswith("]"):
-                items = [
-                    x.strip().strip('"').strip("'")
-                    for x in rest[1:-1].split(",") if x.strip()
-                ]
-                return items
-            break
-    # Block form: `key:\n  - a\n  - b\n`.
-    lines = header.splitlines()
-    out: list[str] = []
-    capturing = False
-    for line in lines:
-        s = line.rstrip()
-        if s.strip().startswith(f"{key}:") and s.strip().endswith(":"):
-            capturing = True
-            continue
-        if capturing:
-            if s.startswith("  - "):
-                out.append(s[4:].strip().strip('"').strip("'"))
-            elif s and not s.startswith(" "):
-                break
-    return out
+    from kb_core.frontmatter import extract_list
+    return extract_list(header, key)

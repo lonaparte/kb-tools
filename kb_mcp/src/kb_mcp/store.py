@@ -65,7 +65,7 @@ log = logging.getLogger(__name__)
 # When bumping this constant, add a `v<N+1> = ...` line above and
 # describe the change set in one line. A missing entry is a lint
 # failure waiting to happen — every bump must be documented.
-EXPECTED_SCHEMA_VERSION = 6
+EXPECTED_SCHEMA_VERSION = 7
 
 
 class Store:

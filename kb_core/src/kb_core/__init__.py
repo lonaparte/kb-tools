@@ -6,7 +6,7 @@ packages.
 """
 from __future__ import annotations
 
-__version__ = "0.1.0"
+__version__ = "0.27.1"
 
 # Re-exports so downstream can write `from kb_core import safe_resolve`.
 from .paths import (
@@ -51,6 +51,9 @@ from .format import (
     render_json,
     WRITE_RESULT_FIELD_ORDER,
 )
+from .frontmatter import (
+    extract_list,
+)
 
 __all__ = [
     "__version__",
@@ -91,4 +94,6 @@ __all__ = [
     "render_error",
     "render_json",
     "WRITE_RESULT_FIELD_ORDER",
+    # frontmatter
+    "extract_list",
 ]

@@ -360,6 +360,7 @@ def _record_re_summarize_failure(
             record_event, EVENT_RE_SUMMARIZE,
             RE_SUMMARIZE_SKIP_NOT_PROCESSED, RE_SUMMARIZE_SKIP_PDF,
             RE_SUMMARIZE_SKIP_MTIME, RE_SUMMARIZE_SKIP_LLM,
+            RE_SUMMARIZE_SKIP_BAD_TARGET,
         )
     except ImportError:
         return
@@ -369,19 +370,49 @@ def _record_re_summarize_failure(
         cat = None
         if code == "not_processed":
             cat = RE_SUMMARIZE_SKIP_NOT_PROCESSED
-        elif code == "pdf_missing":
+        elif code in ("pdf_missing", "no_attachment_keys"):
+            # v27: no_attachment_keys is the frontmatter-has-no-
+            # zotero_attachment_keys case — it's a variety of
+            # "we can't locate the PDF", so it belongs in the
+            # PDF bucket, not the LLM bucket.
             cat = RE_SUMMARIZE_SKIP_PDF
         elif code == "mtime_conflict":
             cat = RE_SUMMARIZE_SKIP_MTIME
         elif code in ("bad_request", "llm_other", "quota"):
             cat = RE_SUMMARIZE_SKIP_LLM
+        elif code in ("bad_target", "md_not_found", "paper_not_found"):
+            cat = RE_SUMMARIZE_SKIP_BAD_TARGET
         if cat is None:
             # No code: fall back to substring-based classification.
+            # v27: added an md-not-found branch BEFORE the LLM
+            # fallback so mistyped paper keys (md doesn't exist)
+            # stop silently landing in skip_llm_error. Also
+            # broadened the PDF-locate branch so
+            # "no zotero_attachment_keys in frontmatter — cannot
+            # locate the PDF" (observed in v26.5 field report)
+            # routes to skip_pdf_missing.
             low = msg.lower()
-            if "fulltext_processed is not true" in low or "not processed" in low:
+            if (
+                "paper md not found" in low
+                or "paper not found" in low
+                or ("md" in low and "not found" in low)
+            ):
+                cat = RE_SUMMARIZE_SKIP_BAD_TARGET
+            elif "fulltext_processed is not true" in low or "not processed" in low:
                 cat = RE_SUMMARIZE_SKIP_NOT_PROCESSED
-            elif "pdf" in low and ("missing" in low or "not found" in low
-                                    or "no pdf" in low):
+            elif (
+                # PDF-locate failures: any phrasing that implicates
+                # the attachment / PDF lookup path. v26 wording
+                # covered "pdf missing / not found / no pdf";
+                # v27 also covers "no zotero_attachment_keys",
+                # "cannot locate the pdf", and "attachment".
+                ("pdf" in low and (
+                    "missing" in low or "not found" in low
+                    or "no pdf" in low or "locate" in low
+                ))
+                or "no zotero_attachment_keys" in low
+                or "cannot locate" in low
+            ):
                 cat = RE_SUMMARIZE_SKIP_PDF
             elif "mtime" in low or "conflict" in low:
                 cat = RE_SUMMARIZE_SKIP_MTIME
@@ -432,7 +463,8 @@ def _resolve_paper_md(
     if not md.exists():
         raise ReSummarizeError(
             f"paper md not found: {address.md_rel_path}. "
-            f"Has it been imported with `kb-importer import papers`?"
+            f"Has it been imported with `kb-importer import papers`?",
+            code="md_not_found",
         )
     return address, md
 
@@ -442,12 +474,14 @@ def _require_processed_paper(md_text: str, target: str) -> None:
     is correction, not first-pass summarisation."""
     if not md_text.startswith("---\n"):
         raise ReSummarizeError(
-            f"{target}: md has no frontmatter block — cannot re-summarise."
+            f"{target}: md has no frontmatter block — cannot re-summarise.",
+            code="bad_target",
         )
     end = md_text.find("\n---\n", 4)
     if end < 0:
         raise ReSummarizeError(
-            f"{target}: frontmatter block is not terminated."
+            f"{target}: frontmatter block is not terminated.",
+            code="bad_target",
         )
     header = md_text[4:end]
     processed = False

@@ -10,7 +10,15 @@ from __future__ import annotations
 # authoritative current schema and kb_mcp.migrations for migrations.
 # When this bumps, every package that reads the DB must pin to the
 # new kb-mcp.
-SCHEMA_VERSION = 6
+#
+# v6 → v7 (v27): fixed foreign-key targets on paper_attachments,
+# paper_tags, paper_collections, paper_chunk_meta. v6 incorrectly
+# pointed them at papers(zotero_key), which is not a PK/UNIQUE since
+# the v6 PK change — SQLite refused every INSERT with "foreign key
+# mismatch". v7 fixes all four to papers(paper_key). A v6 DB on
+# disk is re-initialised (drop-and-rebuild) on first startup of a
+# v7 codebase — same mechanism as all prior schema bumps.
+SCHEMA_VERSION = 7
 
 
 # Well-known file paths inside `<kb_root>/.kb-mcp/` that multiple

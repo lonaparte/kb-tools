@@ -125,12 +125,6 @@ _FM_FULLTEXT_RE = re.compile(
     r'^fulltext_processed:\s*["\']?(true|false|yes|no|on|off|1|0)["\']?\s*$',
     re.MULTILINE | re.IGNORECASE,
 )
-_FM_ATTACHMENT_FLOW_RE = re.compile(
-    r'^zotero_attachment_keys:\s*\[(.*?)\]\s*$', re.MULTILINE,
-)
-_FM_TAGS_FLOW_RE = re.compile(
-    r'^kb_tags:\s*\[(.*?)\]\s*$', re.MULTILINE,
-)
 _FM_YEAR_RE = re.compile(r'^year:\s*(\d+)\s*$', re.MULTILINE)
 _FM_TITLE_RE = re.compile(r'^title:\s*["\']?(.+?)["\']?\s*$', re.MULTILINE)
 _FM_ITEM_TYPE_RE = re.compile(
@@ -163,22 +157,16 @@ def _build_info(kb_root: Path, md: Path) -> PaperInfo | None:
         v = m.group(1).lower()
         ft = v in ("true", "yes", "on", "1")
 
-    # Flow-form lists only (kb-importer writes this form). Block
-    # form is rare in machine-generated mds.
-    att_tuple: tuple[str, ...] = ()
-    m = _FM_ATTACHMENT_FLOW_RE.search(fm)
-    if m:
-        att_tuple = tuple(
-            x.strip().strip('"').strip("'")
-            for x in m.group(1).split(",") if x.strip()
-        )
-    tag_tuple: tuple[str, ...] = ()
-    m = _FM_TAGS_FLOW_RE.search(fm)
-    if m:
-        tag_tuple = tuple(
-            x.strip().strip('"').strip("'")
-            for x in m.group(1).split(",") if x.strip()
-        )
+    # v27 fix: frontmatter list parsing now lives in
+    # kb_core.frontmatter.extract_list and handles BOTH flow-form
+    # (`key: [a, b]`) AND block-form (`key:\n- a\n- b\n`). Prior
+    # versions used a flow-only regex, which missed every real md
+    # (kb-importer writes block-form by default via PyYAML) —
+    # `re-read --source storage` returned 0 results on any
+    # realistic library.
+    from kb_core.frontmatter import extract_list as _fm_list
+    att_tuple = tuple(_fm_list(fm, "zotero_attachment_keys"))
+    tag_tuple = tuple(_fm_list(fm, "kb_tags"))
 
     year = None
     m = _FM_YEAR_RE.search(fm)

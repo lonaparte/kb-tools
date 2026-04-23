@@ -14,10 +14,15 @@ from kb_core.schema import (
 )
 
 
-def test_schema_version_is_6():
-    # v27 ships with schema v6 unchanged — coordinate a bump here
-    # with kb_mcp.store.EXPECTED_SCHEMA_VERSION and a migration.
-    assert SCHEMA_VERSION == 6
+def test_schema_version_is_7():
+    # v27 ships schema v7: v6 had broken foreign keys on side
+    # tables (targeted papers.zotero_key which isn't PK/UNIQUE
+    # since the v6 PK change). v7 fixes the FK targets to
+    # papers.paper_key. A v6 DB on disk is rebuilt on first v7
+    # startup. Bumping this constant without a migration would
+    # break users' existing DBs silently — coordinate with
+    # kb_mcp.store.EXPECTED_SCHEMA_VERSION.
+    assert SCHEMA_VERSION == 7
 
 
 def test_kb_mcp_store_agrees():
