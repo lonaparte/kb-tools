@@ -353,25 +353,39 @@ def check_agent_rules_sync() -> list[str]:
 
 
 def check_fulltext_markers_sync() -> list[str]:
-    """Check that FULLTEXT_START / FULLTEXT_END are declared with the
-    SAME string literal in kb_importer.md_io (the canonical home) and
-    kb_write.ops.re_summarize (a necessary re-declaration to keep
-    kb_write independently installable — see that file's docstring).
+    """Check that FULLTEXT_START / FULLTEXT_END resolve to the same
+    string in every module that uses them.
+
+    v0.28.0: kb_importer.md_io and kb_write.ops.re_summarize no
+    longer re-declare these literals — both now
+    `from kb_core import FULLTEXT_START, FULLTEXT_END`. The drift
+    risk is gone at the source. This lint is now redundant for
+    those two modules (import-identity makes drift impossible),
+    but we keep the check because:
+      - it still catches the case where someone re-introduces a
+        literal re-declaration (linter guards against regression)
+      - SECTION_COUNT vs SECTION_TITLES is still a protocol check
+
+    Accepts either form:
+      - `NAME = "..."`     (direct literal — pre-0.28.0 shape)
+      - `from kb_core import ..., NAME, ...` (v0.28.0 canonical)
 
     Also check that SECTION_COUNT in re_summarize.py matches the
     number of section titles in kb_importer.summarize.SECTION_TITLES.
-    These constants are a cross-package string protocol; drift would
-    silently break re-summarize without a crash.
     """
     errors: list[str] = []
 
-    # 1. FULLTEXT_START / FULLTEXT_END literal equality.
     importer_md_io = (REPO / "kb_importer" / "src" / "kb_importer" / "md_io.py")
     write_resum    = (REPO / "kb_write"    / "src" / "kb_write"    / "ops" / "re_summarize.py")
     if not importer_md_io.exists():
         return [f"{importer_md_io.relative_to(REPO)} missing"]
     if not write_resum.exists():
         return [f"{write_resum.relative_to(REPO)} missing"]
+
+    # kb_core is the canonical source from 0.28.0 onward — read
+    # the constant value there and use it as the reference.
+    kb_core_schema = (REPO / "kb_core" / "src" / "kb_core" / "schema.py")
+    core_text = kb_core_schema.read_text(encoding="utf-8") if kb_core_schema.exists() else ""
 
     def _extract_literal(text: str, name: str) -> str | None:
         m = re.search(
@@ -380,29 +394,54 @@ def check_fulltext_markers_sync() -> list[str]:
         )
         return m.group("val") if m else None
 
+    def _imports_from_kb_core(text: str, name: str) -> bool:
+        # Matches `from kb_core import ..., NAME, ...` across
+        # single-line OR multi-line parenthesised imports.
+        m = re.search(
+            r"from\s+kb_core(?:\.\w+)?\s+import\s+(?P<names>\([^)]+\)|[^\n]+)",
+            text,
+        )
+        if not m:
+            return False
+        names_blob = m.group("names").replace("(", "").replace(")", "")
+        names = {n.strip() for n in re.split(r"[,\s]+", names_blob) if n.strip()}
+        return name in names
+
     imp_text = importer_md_io.read_text(encoding="utf-8")
     wri_text = write_resum.read_text(encoding="utf-8")
     for name in ("FULLTEXT_START", "FULLTEXT_END"):
-        imp_val = _extract_literal(imp_text, name)
-        wri_val = _extract_literal(wri_text, name)
-        if imp_val is None:
+        # What's the canonical value?
+        canonical = _extract_literal(core_text, name)
+        if canonical is None:
             errors.append(
-                f"{name} not found in kb_importer/src/kb_importer/md_io.py "
-                f"(expected `{name} = \"...\"` at module level)"
+                f"{name} not found in kb_core/src/kb_core/schema.py — "
+                f"canonical source of fulltext markers. "
+                f"Expected `{name} = \"...\"`."
             )
             continue
-        if wri_val is None:
-            errors.append(
-                f"{name} not found in kb_write/src/kb_write/ops/re_summarize.py "
-                f"(expected `{name} = \"...\"` at module level)"
-            )
-            continue
-        if imp_val != wri_val:
-            errors.append(
-                f"{name} diverged: kb_importer has {imp_val!r}, "
-                f"kb_write has {wri_val!r}. These MUST be identical — "
-                f"re-summarize splices body between these exact markers."
-            )
+        # Does each consumer either import from kb_core OR
+        # declare the same literal?
+        for label, path, text in (
+            ("kb_importer/src/kb_importer/md_io.py", importer_md_io, imp_text),
+            ("kb_write/src/kb_write/ops/re_summarize.py", write_resum, wri_text),
+        ):
+            if _imports_from_kb_core(text, name):
+                continue  # 0.28.0 canonical path — no literal needed
+            lit = _extract_literal(text, name)
+            if lit is None:
+                errors.append(
+                    f"{name} not found in {label}: neither "
+                    f"imported from kb_core nor declared as a "
+                    f"module-level literal."
+                )
+                continue
+            if lit != canonical:
+                errors.append(
+                    f"{name} diverged: kb_core has {canonical!r}, "
+                    f"{label} has {lit!r}. These MUST match — "
+                    f"re-summarize splices body between these "
+                    f"exact markers."
+                )
 
     # 2. SECTION_COUNT vs len(SECTION_TITLES).
     summarize_py = (REPO / "kb_importer" / "src" / "kb_importer" / "summarize.py")

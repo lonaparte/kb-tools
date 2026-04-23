@@ -61,11 +61,12 @@ from ..rules import RuleViolation
 log = logging.getLogger(__name__)
 
 
-# Fulltext region markers — must match md_io's constants in kb_importer.
-# We re-declare them here so kb_write doesn't hard-depend on kb_importer
-# being installed for any path other than re-summarise itself.
-FULLTEXT_START = "<!-- kb-fulltext-start -->"
-FULLTEXT_END = "<!-- kb-fulltext-end -->"
+# v0.28.0: fulltext region markers pulled from kb_core (the
+# canonical source since 0.27.0). Previously re-declared here
+# "so kb_write doesn't hard-depend on kb_importer"; kb_core is
+# stdlib-only and is already a required dep of every package
+# in the bundle, so the import is clean.
+from kb_core import FULLTEXT_START, FULLTEXT_END
 
 # The 7 sections we expect inside the fulltext region. Identified by
 # the canonical English+Chinese heading pattern kb-importer emits.

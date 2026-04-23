@@ -27,11 +27,17 @@ import frontmatter
 log = logging.getLogger(__name__)
 
 
-# Region markers used in our md template.
-AI_ZONE_START = "<!-- kb-ai-zone-start -->"
-AI_ZONE_END = "<!-- kb-ai-zone-end -->"
-FULLTEXT_START = "<!-- kb-fulltext-start -->"
-FULLTEXT_END = "<!-- kb-fulltext-end -->"
+# v0.28.0: marker constants now come from their canonical source
+# (kb_core for fulltext, kb_write.zones for ai-zone). Earlier
+# versions re-declared the literals here as well, and
+# check_package_consistency ran a substring parity check between
+# this file, kb_write.ops.re_summarize, and kb_mcp.indexer to
+# ensure they didn't drift. The consolidation makes the parity
+# check trivially true (same import source) and removes the
+# drift risk altogether. Kept re-exported so existing callers
+# `from kb_importer.md_io import FULLTEXT_START` still work.
+from kb_core import FULLTEXT_START, FULLTEXT_END
+from kb_write.zones import AI_ZONE_START, AI_ZONE_END
 
 # Default placeholder shown when the AI zone is empty.
 AI_ZONE_PLACEHOLDER = (

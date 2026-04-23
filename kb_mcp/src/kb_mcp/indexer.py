@@ -47,11 +47,11 @@ log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------
 # Section markers used by kb-importer's paper md template.
-# We read these to know where the fulltext region begins/ends.
+# v0.28.0: imported from the canonical kb_core source rather than
+# re-declared. Re-exported here for callers that `from
+# kb_mcp.indexer import FULLTEXT_START`.
 # ---------------------------------------------------------------------
-
-FULLTEXT_START = "<!-- kb-fulltext-start -->"
-FULLTEXT_END = "<!-- kb-fulltext-end -->"
+from kb_core import FULLTEXT_START, FULLTEXT_END
 
 
 @dataclass
