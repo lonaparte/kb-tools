@@ -69,12 +69,17 @@ precisely:
   kb-mcp runs as a long-lived server; kb-write is called by agents;
   kb-citations is invoked manually. They never block each other.
 - **NOT install-independent**: `kb_importer` hard-depends on
-  `kb_write` (reuses its `atomic.atomic_write` and commit path), and
-  `kb_citations` hard-depends on `kb_mcp` (writes into the links
-  table). `kb_mcp` soft-depends on `kb_write` (write-MCP-tools
-  become unavailable if kb_write isn't installed, but the server
-  still starts). `pyproject.toml` in each package records these
-  as real dependencies.
+  `kb_write` (reuses its `atomic.atomic_write` and commit path).
+  `kb_citations` has a two-tier dependency on `kb_mcp`:
+  `kb-citations fetch` runs standalone (produces a JSONL cache and
+  will use that as a fallback if no DB is reachable), but
+  `kb-citations link` and `kb-citations refresh-counts` need
+  `kb_mcp` installed to write into the projection DB —
+  `pyproject.toml` therefore pins `kb-mcp` under the `link` extra
+  rather than as a hard dependency. `kb_mcp` soft-depends on
+  `kb_write` (write-MCP-tools become unavailable if kb_write isn't
+  installed, but the server still starts). `pyproject.toml` in each
+  package records these as real dependencies.
 
 Practically: for a full install, install all four into one venv.
 For a read-only deployment (e.g. a web server that hosts kb-mcp over

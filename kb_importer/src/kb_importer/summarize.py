@@ -396,8 +396,19 @@ class GeminiProvider:
         #   thinkingConfig.thinkingLevel = "low" to keep thinking
         #   overhead small. Our 7-section summary doesn't need deep
         #   reasoning and "low" cuts cost + latency drastically.
-        # - Gemini 2.5 series: use thinkingConfig.thinkingBudget = 0
-        #   to disable thinking entirely (same rationale).
+        # - Gemini 2.5 series split by variant:
+        #   * gemini-2.5-flash / gemini-2.5-flash-lite accept
+        #     thinkingBudget=0 to disable thinking entirely.
+        #   * gemini-2.5-pro DOES NOT accept 0 ("Budget 0 is invalid.
+        #     This model only works in thinking mode."). Its valid
+        #     range is 128-32768 or -1 (dynamic). We use 128 — the
+        #     minimum — to keep thinking-token cost minimal while
+        #     remaining within the model's contract. This matters
+        #     because 2.5-pro is the default
+        #     `--fulltext-fallback-model` that kicks in once
+        #     3.1-pro-preview hits its 250 RPD quota; without this
+        #     carve-out, every fallback request 400s and the
+        #     remaining papers all become llm-fail.
         # - Older models (2.0 etc) don't have thinking; omit the key.
         # Without this, Gemini 2.5/3.x eat most of maxOutputTokens as
         # thinking tokens and truncate the actual JSON → "LLM returned
@@ -410,8 +421,16 @@ class GeminiProvider:
         m = self.model.lower()
         if m.startswith("gemini-3") or "gemini-3." in m:
             generation_config["thinkingConfig"] = {"thinkingLevel": "low"}
-        elif m.startswith("gemini-2.5"):
+        elif m.startswith("gemini-2.5-flash"):
+            # -flash and -flash-lite allow thinkingBudget=0.
             generation_config["thinkingConfig"] = {"thinkingBudget": 0}
+        elif m.startswith("gemini-2.5"):
+            # -pro and any other 2.5-* variant we haven't seen:
+            # stay on the safe side with the minimum positive budget.
+            # Using 128 (the documented minimum for 2.5-pro) keeps
+            # the same "minimise thinking overhead" intent without
+            # tripping the API's 0-forbidden rule.
+            generation_config["thinkingConfig"] = {"thinkingBudget": 128}
 
         body = json.dumps({
             "systemInstruction": {"parts": [{"text": system}]},

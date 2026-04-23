@@ -55,9 +55,10 @@ kb-write thought update thoughts/2026-04-22-foo \
 kb-write topic create --slug NAME --title "..." --body-file ...
 kb-write topic update topics/NAME --expected-mtime ... ...
 
-# Paper/note AI zone (only the zone between markers)
+# Paper/note AI zone (only the zone between markers; append-only)
 kb-write ai-zone show papers/KEY
-kb-write ai-zone update papers/KEY --expected-mtime ... --body-file ...
+kb-write ai-zone append papers/KEY --expected-mtime ... \
+  --title "one-line entry title" --body-file ... [--date YYYY-MM-DD]
 
 # Tags / refs (any md)
 kb-write tag add papers/KEY --tag to-reread
@@ -222,10 +223,13 @@ r = thought.update(ctx, "thoughts/2026-04-22-an-idea",
                    expected_mtime=r.mtime, body="new content")
 
 # AI zone — v26: append-only (was v25 full-replace update)
+from datetime import date
 body, mtime = ai_zone.read_zone(ctx.kb_root, "papers/ABCD1234")
 r = ai_zone.append(ctx, "papers/ABCD1234",
-                   title="connection to X", body_md="Bullet...",
-                   date="2026-04-22")
+                   expected_mtime=mtime,
+                   title="connection to X",
+                   body="Bullet...",
+                   entry_date=date.fromisoformat("2026-04-22"))
 
 # Tags / refs (low-stakes; mtime optional)
 tag.add(ctx, "papers/ABCD1234", "to-reread")

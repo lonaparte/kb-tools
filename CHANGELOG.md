@@ -5,6 +5,78 @@ All notable changes to ee-kb-tools.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is our own (calendar-ish, per-major-iteration).
 
+## [0.28.1] — 2026-04
+
+Bug fix + doc-correction release from external reviewer feedback
+on the 0.28.0 bundle.
+
+### Fixed
+
+- **Gemini 2.5-pro fallback path was sending `thinkingBudget: 0`,
+  which that model rejects with HTTP 400 "Budget 0 is invalid.
+  This model only works in thinking mode."** The pre-0.28.1 branch
+  `elif m.startswith("gemini-2.5"): thinkingBudget = 0` was
+  correct for `gemini-2.5-flash` and `gemini-2.5-flash-lite` (both
+  accept 0 to disable thinking) but silently wrong for
+  `gemini-2.5-pro` (which always thinks and requires the budget
+  in [128, 32768] or -1 for dynamic).
+
+  Practical impact: `--fulltext-fallback-model` defaults to
+  `gemini-2.5-pro` because it has a much larger RPD allowance
+  than the primary `gemini-3.1-pro-preview` (250/day). When the
+  primary's quota ran out mid-batch and the pipeline switched to
+  the fallback, every remaining paper hit the 400 and was counted
+  as llm-fail — exactly the hundreds-of-papers-stuck state users
+  saw after the 3.1-pro-preview daily quota was exhausted.
+
+  Fix: the `gemini-2.5-*` branch now splits on variant. flash
+  variants still send `thinkingBudget: 0`; pro (and any unknown
+  2.5-* future variant) gets `thinkingBudget: 128` — the
+  documented minimum, keeping thinking-token cost minimal while
+  respecting the API's contract. Locked by
+  `tests/unit/test_gemini_thinking_config.py` (5 cases).
+
+### Fixed (docs)
+
+Reviewer audit of the 0.28.0 bundle flagged four places where
+documentation described the v25 or pre-refactor API instead of
+what the CLI actually accepts. All four would have made agents /
+users fail on first invocation:
+
+- `kb_write/README.md` said `kb-write ai-zone update ...`, but v26
+  replaced `update` with append-only `ai-zone append`. Corrected
+  to `ai-zone append KEY --expected-mtime ... --title "..." --body-file ... [--date YYYY-MM-DD]`.
+- `kb_write/README.md` Python API example called
+  `ai_zone.append(..., body_md=..., date="2026-04-22")`, but the
+  real signature is `append(ctx, target, expected_mtime, *, title,
+  body, entry_date)`. Example corrected: `expected_mtime` is
+  required, body keyword is `body` (not `body_md`), date keyword is
+  `entry_date` and takes a `datetime.date` (not a string).
+- `kb_write/src/kb_write/prompts/fragments/write_workflow.md`
+  (shown to agents as on-disk guidance) also carried the stale
+  `ai-zone update` form AND used `kb-write ref add ... --target
+  papers/KEY` (correct flag is `--target-ref` / `--ref`). Both
+  corrected.
+- Root `README.md` stated "`kb_citations` hard-depends on
+  `kb_mcp`". In reality the dependency is split: `kb-citations
+  fetch` runs standalone (writes a JSONL cache that can be used
+  as fallback), while `link` and `refresh-counts` need kb_mcp to
+  write into the projection DB. `pyproject.toml` pins `kb-mcp`
+  under the `link` extra, not as a hard dep. Description updated.
+
+### Added
+
+- **`scripts/make_release.sh`** — build a clean release zip. The
+  0.28.0 release zip shipped with 187 `__pycache__/*.pyc` entries
+  (bytecode from the packager's Python version), which bloats the
+  artefact and can cause surprising import behaviour if the
+  receiver's Python differs. The new script stages a sanitised
+  copy with explicit exclusions, runs the consistency /
+  no-secrets / no-system-paths gates as pre-flight, zips, and
+  asserts 0 bytecode entries in the final zip before reporting
+  success. Works without rsync or zip (falls back to cp -a +
+  python3 -m zipfile from stdlib).
+
 ## [0.28.0] — 2026-04
 
 A feature + hardening release: new migration & doctor-fix surface,
