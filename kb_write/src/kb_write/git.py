@@ -32,6 +32,17 @@ class GitError(Exception):
 # rate is small but non-zero (field report: 3/50 commits lost even
 # though all 50 md writes landed on disk).
 #
+# v0.27.5: also retry on `cannot lock ref 'HEAD'` errors. git holds
+# TWO serialising locks during a commit — the index lock
+# (.git/index.lock) during `add`/`commit`-staging and the HEAD ref
+# lock (.git/HEAD.lock, or .git/refs/heads/<br>.lock) during the
+# final ref update. Field report at 100-way concurrency saw the
+# HEAD-ref lock fire separately from index.lock, and the prior
+# retry set missed it (error text is "cannot lock ref 'HEAD': is
+# at <sha> but expected <sha>"). Same retry strategy — git's own
+# ref-lock window is shorter than the index-lock window, so the
+# existing backoff schedule is already generous enough.
+#
 # Retry caps at ~1s total (0.05 + 0.1 + 0.2 + 0.4 = 0.75s) which is
 # enough to outwait a typical commit (~20ms for a single-file
 # staging + commit on SSD) but short enough that a truly-stuck lock
@@ -40,6 +51,12 @@ _LOCK_ERROR_MARKERS = (
     "another git process seems to be running",
     "index.lock",
     "unable to create",
+    # v0.27.5: HEAD ref lock (separate code path from index.lock).
+    "cannot lock ref",
+    # Also the lower-level phrasing git sometimes emits when the
+    # loose-ref file lock file itself (`<refpath>.lock`) can't be
+    # taken — belt-and-braces so both phrasings are covered.
+    "ref lock",
 )
 
 

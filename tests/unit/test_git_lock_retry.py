@@ -139,3 +139,59 @@ def test_index_lock_literal_matches(monkeypatch):
         monkeypatch.setattr(subprocess, "run", fr)
         r = kw_git._run_git_with_retry(["git", "x"], max_attempts=3)
         assert r.returncode == 0, f"should have retried past {text!r}"
+
+
+def test_retries_on_head_ref_lock(monkeypatch):
+    """v0.27.5 field-report finding: 100-way concurrent commits
+    also collide on the HEAD ref lock (separate lock from
+    index.lock, fires after staging succeeds but before the commit
+    lands). Error text is `cannot lock ref 'HEAD': is at <sha> but
+    expected <sha>`. Previous marker list only caught index-lock
+    phrasings — retry never fired for ref-lock, 71/100 commits
+    lost at 100-way `--no-lock` stress."""
+    from kb_write import git as kw_git
+
+    calls = [
+        _make_result(
+            128,
+            stderr=(
+                "error: cannot lock ref 'HEAD': "
+                "is at 928473b1aae5b8b6dc4526bfe21aee7f8f452c91 "
+                "but expected 2fb62e66033da6fba636de59cf50d41aeb611dec"
+            ),
+        ),
+        _make_result(128, stderr="error: cannot lock ref 'HEAD'"),
+        _make_result(0),
+    ]
+    i = {"n": 0}
+    def fr(argv, **_):
+        r = calls[i["n"]]
+        i["n"] += 1
+        return r
+    monkeypatch.setattr(subprocess, "run", fr)
+
+    r = kw_git._run_git_with_retry(["git", "commit", "-m", "x"], max_attempts=5)
+    assert r.returncode == 0
+    assert i["n"] == 3, "should have retried twice and succeeded on 3rd call"
+
+
+def test_retries_on_loose_ref_lock_phrasing(monkeypatch):
+    """git also emits `ref lock` (lowercased, shorter) when it
+    can't take a loose-ref lock file. Alternate phrasing, same
+    race. The v0.27.5 marker list covers both."""
+    from kb_write import git as kw_git
+
+    calls = [
+        _make_result(128, stderr="fatal: unable to obtain ref lock"),
+        _make_result(0),
+    ]
+    i = {"n": 0}
+    def fr(argv, **_):
+        r = calls[i["n"]]
+        i["n"] += 1
+        return r
+    monkeypatch.setattr(subprocess, "run", fr)
+
+    r = kw_git._run_git_with_retry(["git", "commit"], max_attempts=3)
+    assert r.returncode == 0
+    assert i["n"] == 2
