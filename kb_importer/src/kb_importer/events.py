@@ -111,10 +111,19 @@ RE_READ_SKIP_LLM           = "skip_llm_error"          # LLM pass failed (reuses
 RE_READ_SKIP_PDF           = "skip_pdf_missing"        # no PDF for paper
 RE_READ_SKIP_NOT_PROCESSED = "skip_not_processed"      # fulltext_processed != true — re_summarize needs initial fulltext first
 RE_READ_DRYRUN             = "dryrun_selected"         # chosen but not executed
+# Parity with re_summarize: a batch-selected paper whose md no
+# longer exists / whose target can't be resolved is a pre-LLM
+# failure, not an LLM failure. Without this category the kb-mcp
+# report would overcount LLM errors when the batch source+selector
+# combination yields stale keys (e.g. an orphan in the source
+# index after a delete, or a key typo passed through the selector
+# as a forced target).
+RE_READ_SKIP_BAD_TARGET    = "skip_bad_target"
 
 _ALLOWED_RE_READ_CATEGORIES = {
     RE_READ_SUCCESS, RE_READ_SKIP_MTIME, RE_READ_SKIP_LLM,
     RE_READ_SKIP_PDF, RE_READ_SKIP_NOT_PROCESSED, RE_READ_DRYRUN,
+    RE_READ_SKIP_BAD_TARGET,
 }
 
 

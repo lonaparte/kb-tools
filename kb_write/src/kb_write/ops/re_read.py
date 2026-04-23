@@ -137,6 +137,7 @@ def re_read(
             RE_READ_SUCCESS, RE_READ_SKIP_LLM,
             RE_READ_SKIP_MTIME, RE_READ_SKIP_PDF,
             RE_READ_SKIP_NOT_PROCESSED, RE_READ_DRYRUN,
+            RE_READ_SKIP_BAD_TARGET,
         )
         _events_ok = True
     except ImportError:
@@ -206,31 +207,64 @@ def re_read(
             # `code=` parameter or come from external callers. This
             # means a provider changing its 400 wording no longer
             # re-routes events from `bad_request` to `llm_other`.
+            #
+            # v0.27.6: parity with re_summarize's 0.27.1 classifier
+            # upgrade. Before this, a re_read batch that selected a
+            # stale key (md already deleted) or a paper with no
+            # attachment keys in its frontmatter silently landed the
+            # event in skip_llm_error, overcounting "LLM failures"
+            # in kb-mcp report. Now:
+            #   - code "no_attachment_keys"          → skip_pdf_missing
+            #     (it's a variety of "can't locate the PDF")
+            #   - code in bad_target / md_not_found / paper_not_found
+            #                                         → skip_bad_target
+            #   - substring "paper md not found" (etc.)
+            #                                         → skip_bad_target
+            #     (checked BEFORE the LLM fallback so mistyped keys
+            #      stop going to the wrong bucket)
+            #   - substring "cannot locate" / "no zotero_attachment_keys"
+            #                                         → skip_pdf_missing
             code = getattr(e, "code", None)
             msg = str(e)
             if code == "not_processed":
                 cat = RE_READ_SKIP_NOT_PROCESSED if _events_ok else "skip_not_processed"
-            elif code == "pdf_missing":
+            elif code in ("pdf_missing", "no_attachment_keys"):
                 cat = RE_READ_SKIP_PDF if _events_ok else "skip_pdf_missing"
             elif code == "mtime_conflict":
                 cat = RE_READ_SKIP_MTIME if _events_ok else "skip_mtime_conflict"
-            elif code in ("bad_request", "llm_other", "quota", None):
-                # Fall back to substring classification when no code
-                # is set. This preserves v26 behaviour for old call
-                # sites while new raise sites get deterministic
-                # routing via code.
-                if code is not None:
-                    cat = RE_READ_SKIP_LLM if _events_ok else "skip_llm_error"
+            elif code in ("bad_target", "md_not_found", "paper_not_found"):
+                cat = (RE_READ_SKIP_BAD_TARGET
+                       if _events_ok else "skip_bad_target")
+            elif code in ("bad_request", "llm_other", "quota"):
+                cat = RE_READ_SKIP_LLM if _events_ok else "skip_llm_error"
+            elif code is None:
+                # No code attached — fall back to substring matching.
+                # Preserves v26 behaviour for callers that predate
+                # `code=`; new raise sites get deterministic routing
+                # via the code branch above.
+                low = msg.lower()
+                if (
+                    "paper md not found" in low
+                    or "paper not found" in low
+                    or ("md" in low and "not found" in low)
+                ):
+                    cat = (RE_READ_SKIP_BAD_TARGET
+                           if _events_ok else "skip_bad_target")
+                elif "fulltext_processed is not true" in low or "not processed" in low:
+                    cat = RE_READ_SKIP_NOT_PROCESSED if _events_ok else "skip_not_processed"
+                elif (
+                    ("pdf" in low and (
+                        "missing" in low or "not found" in low
+                        or "no pdf" in low or "locate" in low
+                    ))
+                    or "no zotero_attachment_keys" in low
+                    or "cannot locate" in low
+                ):
+                    cat = RE_READ_SKIP_PDF if _events_ok else "skip_pdf_missing"
+                elif "mtime" in low or "conflict" in low:
+                    cat = RE_READ_SKIP_MTIME if _events_ok else "skip_mtime_conflict"
                 else:
-                    low = msg.lower()
-                    if "fulltext_processed is not true" in low or "not processed" in low:
-                        cat = RE_READ_SKIP_NOT_PROCESSED if _events_ok else "skip_not_processed"
-                    elif "pdf" in low and ("missing" in low or "not found" in low or "no pdf" in low):
-                        cat = RE_READ_SKIP_PDF if _events_ok else "skip_pdf_missing"
-                    elif "mtime" in low or "conflict" in low:
-                        cat = RE_READ_SKIP_MTIME if _events_ok else "skip_mtime_conflict"
-                    else:
-                        cat = RE_READ_SKIP_LLM if _events_ok else "skip_llm_error"
+                    cat = RE_READ_SKIP_LLM if _events_ok else "skip_llm_error"
             else:
                 # Unknown code — log as generic LLM skip so nothing
                 # slips through silently, and future codes get a

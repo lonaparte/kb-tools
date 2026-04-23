@@ -68,14 +68,20 @@ def _load_read_set(kb_root: Path) -> set[str]:
     """Return paper_keys that appear in an executed re_read event.
 
     We include: RE_READ_SUCCESS, RE_READ_SKIP_MTIME, RE_READ_SKIP_LLM,
-    RE_READ_SKIP_PDF (all indicate a real attempt was made — even if
-    it failed, we don't want to re-try the same paper on the very next
-    run).
+    RE_READ_SKIP_PDF, RE_READ_SKIP_NOT_PROCESSED, RE_READ_SKIP_BAD_TARGET
+    (all indicate a real attempt was made — even if it failed, we
+    don't want to re-try the same paper on the very next run).
 
     We EXCLUDE: RE_READ_DRYRUN (paper was chosen but not processed).
 
     Defensive: any import/read error returns an empty set (degrade to
     treating nothing as read → random fallback kicks in).
+
+    Forward-compat note: any newly-added RE_READ_SKIP_* category is
+    considered an "attempt was made" unless explicitly documented
+    otherwise. Re-entering this function for a new category only
+    needs the constant added to the imports + the `executed_cats`
+    set below; no downstream changes.
     """
     try:
         from kb_importer.events import (
@@ -83,6 +89,7 @@ def _load_read_set(kb_root: Path) -> set[str]:
             RE_READ_SUCCESS, RE_READ_SKIP_MTIME,
             RE_READ_SKIP_LLM, RE_READ_SKIP_PDF,
             RE_READ_SKIP_NOT_PROCESSED,
+            RE_READ_SKIP_BAD_TARGET,
         )
     except ImportError:
         return set()
@@ -94,6 +101,7 @@ def _load_read_set(kb_root: Path) -> set[str]:
         RE_READ_SUCCESS, RE_READ_SKIP_MTIME,
         RE_READ_SKIP_LLM, RE_READ_SKIP_PDF,
         RE_READ_SKIP_NOT_PROCESSED,
+        RE_READ_SKIP_BAD_TARGET,
     }
     out: set[str] = set()
     for e in events:
