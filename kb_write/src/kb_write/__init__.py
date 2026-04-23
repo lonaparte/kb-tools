@@ -10,7 +10,7 @@ same atomic-write + mtime-guard + git-commit pipeline.
 See AGENT-WRITE-RULES.md (shipped at the package root) for the
 normative write rules.
 """
-__version__ = "0.27.8"
+__version__ = "0.27.9"
 
 from .config import WriteContext
 from .rules import RuleViolation
