@@ -19,11 +19,20 @@ Checks performed (see AGENT-WRITE-RULES.md):
      year is int, fulltext_processed is bool. Catches YAML typos
      like `kb_tags: "gfm"` (string not list) or `kb_tags: [1, 2]`
      (non-string elements) before they crash downstream consumers.
+- I. List-field duplicates: kb_refs, kb_tags, authors should contain
+     each value at most once. Duplicates don't crash anything but
+     clutter the index and make diffs noisy. (v0.28.0)
 
-`--fix` auto-repairs B, C, and (optionally) A by appending missing
-AI-zone markers to the end of the file. A-repair is dangerous enough
-we only do it if the file is EMPTY of both markers (not "half"). G
-and D/E are reported but not auto-fixed.
+`--fix` auto-repairs, in order of confidence:
+  - B + C: creates missing scaffold files (idempotent).
+  - A: appends missing AI-zone markers ONLY when both markers absent
+    (never half-present; those are reported, not touched).
+  - I: rewrites frontmatter with duplicates removed (order-preserved,
+    first occurrence wins).
+D/E/F/G/H are reported but not auto-fixed — they need human judgement
+(D/E slug rename, F priority value, G dangling-ref intent, H type
+coercion). For D specifically: run `kb-write migrate-slugs` to
+canonicalise pre-v24 slug violations in a dedicated tool.
 """
 from __future__ import annotations
 
@@ -89,6 +98,7 @@ def doctor(
     _check_prefs(kb_root, report)
     _check_refs_in_all(kb_root, report)
     _check_frontmatter_types(kb_root, report)
+    _check_list_duplicates(kb_root, report, fix=fix)
 
     return report
 
@@ -223,7 +233,11 @@ def _check_thoughts(kb_root: Path, report: DoctorReport) -> None:
             report.findings.append(Finding(
                 severity="warning", category="slug",
                 path=md.relative_to(kb_root).as_posix(),
-                message=str(e), auto_fixable=False,
+                message=(
+                    f"{e}  (Tip: run `kb-write migrate-slugs` to "
+                    f"bulk-rename pre-v24 slug violations.)"
+                ),
+                auto_fixable=False,
             ))
 
 
@@ -447,6 +461,133 @@ def _check_frontmatter_types(
                             f"frontmatter field {field_name!r}: "
                             f"expected {desc}, got {actual_desc}. "
                             f"Value: {value!r:.80}"
+                        ),
+                    ))
+
+
+# ----------------------------------------------------------------------
+# I: list-field duplicates (kb_refs, kb_tags, authors)
+# ----------------------------------------------------------------------
+
+# Fields where we dedup duplicates as a high-confidence fix. These are
+# all list-of-string fields where a value appearing twice is never
+# meaningful — list membership is set semantics in our model.
+_DEDUPABLE_LIST_FIELDS: tuple[str, ...] = ("kb_refs", "kb_tags", "authors")
+
+
+def _dedup_preserve_order(items: list) -> tuple[list, list]:
+    """Return (deduped_list, removed_duplicates).
+
+    Preserves first-occurrence order. `removed_duplicates` is the list
+    of (index, value) pairs removed, for display in the finding.
+    """
+    seen: set = set()
+    out: list = []
+    removed: list = []
+    for i, x in enumerate(items):
+        # Use a hashable key; for strings this is just x. Mixed-type
+        # lists are caught by _check_frontmatter_types; here we're
+        # only called on lists-of-strings.
+        try:
+            key = x
+            if key in seen:
+                removed.append((i, x))
+                continue
+            seen.add(key)
+        except TypeError:
+            # Unhashable (shouldn't happen for str) — keep as-is.
+            pass
+        out.append(x)
+    return out, removed
+
+
+def _check_list_duplicates(
+    kb_root: Path, report: DoctorReport, *, fix: bool,
+) -> None:
+    """Scan every md for duplicate entries in kb_refs / kb_tags /
+    authors. Reports a warning per field per file; --fix rewrites
+    the frontmatter with duplicates removed (first occurrence wins,
+    order preserved).
+
+    Duplicates don't break anything at runtime (downstream callers
+    typically set()-ify the list before use) but clutter diffs and
+    make the indexer log lines twice. Safe to auto-dedupe because
+    list-field semantics in this KB are set-like.
+
+    Malformed lists (non-list, non-string elements) are handled by
+    _check_frontmatter_types and skipped here to avoid double-reporting
+    or touching a file that still needs a manual type fix.
+    """
+    for subdir in (
+        "papers", "topics/standalone-note",
+        "topics/agent-created", "thoughts",
+    ):
+        d = kb_root / subdir
+        if not d.exists():
+            continue
+        for md in sorted(d.rglob("*.md")):
+            rel = md.relative_to(kb_root).as_posix()
+            try:
+                post = frontmatter.load(str(md))
+            except Exception:
+                continue
+
+            changed_fields: list[tuple[str, list, list]] = []
+            for field_name in _DEDUPABLE_LIST_FIELDS:
+                value = post.metadata.get(field_name)
+                if not isinstance(value, list):
+                    continue
+                if not all(isinstance(x, str) for x in value):
+                    # Non-string entries — defer to type-check finding.
+                    continue
+                deduped, removed = _dedup_preserve_order(value)
+                if not removed:
+                    continue
+                # Find a human summary of the duplicates.
+                dup_values = sorted({v for _, v in removed})
+                report.findings.append(Finding(
+                    severity="warning",
+                    category="list-duplicates",
+                    path=rel,
+                    message=(
+                        f"{field_name} has {len(removed)} duplicate "
+                        f"entry/entries: "
+                        f"{', '.join(repr(v) for v in dup_values[:5])}"
+                        f"{'...' if len(dup_values) > 5 else ''}. "
+                        f"Run with --fix to dedupe (first occurrence kept)."
+                    ),
+                    auto_fixable=True,
+                ))
+                changed_fields.append((field_name, value, deduped))
+
+            if fix and changed_fields:
+                # Rewrite the md with deduped lists. We build a fresh
+                # frontmatter dict (not using merge_kb_fields — we want
+                # SHRINK semantics, not UNION).
+                new_fm = dict(post.metadata)
+                for field_name, _before, after in changed_fields:
+                    new_fm[field_name] = after
+                try:
+                    new_post = frontmatter.Post(post.content, **new_fm)
+                    text = frontmatter.dumps(new_post)
+                    if not text.endswith("\n"):
+                        text += "\n"
+                    atomic_write(md, text)
+                    for field_name, before, after in changed_fields:
+                        report.fixed.append(
+                            f"deduped {field_name} in {rel} "
+                            f"({len(before)} → {len(after)})"
+                        )
+                except Exception as e:
+                    # Don't mask the finding — just record that the
+                    # fix itself failed.
+                    report.findings.append(Finding(
+                        severity="error",
+                        category="list-duplicates",
+                        path=rel,
+                        message=(
+                            f"dedupe rewrite failed: "
+                            f"{type(e).__name__}: {e}"
                         ),
                     ))
 
