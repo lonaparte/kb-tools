@@ -23,13 +23,18 @@ args, env vars, or the config file.
 
 kb-importer reads item metadata from Zotero in one of two modes:
 
-- **live** (default): Zotero's local HTTP API at localhost:23119. Requires
-  Zotero to be running on the same machine. No network needed.
+- **web** (default, v0.28.0+): Zotero's cloud web API
+  (api.zotero.org). Requires a `library_id`, an API key (via env
+  var), and network access. Does NOT require Zotero to be
+  running anywhere. Works uniformly from headless servers and
+  laptops alike — the most portable setup, which is why it's now
+  the default.
 
-- **web**: Zotero's cloud web API (api.zotero.org). Requires a
-  `library_id`, an API key (via env var), and network access. Does NOT
-  require Zotero to be running anywhere. Ideal for running importer on
-  a server where Zotero isn't installed.
+- **live**: Zotero's local HTTP API at localhost:23119. Requires
+  Zotero to be running on the same machine. No network needed.
+  Pre-0.28.0 default. Still supported — set
+  `source_mode: live` in config or pass `--zotero-source live`
+  to get it.
 
 Both modes use the same local `zotero_storage_dir` to find PDFs. The
 assumption: PDFs are the same regardless of metadata source (same item
@@ -83,7 +88,7 @@ class Config:
     kb_root: Path
 
     # Zotero source selection
-    zotero_source_mode: str = "live"          # "live" | "web"
+    zotero_source_mode: str = "web"           # v0.28.0: default flipped live → web
     zotero_library_id: str = ""               # required iff mode == "web"
     zotero_library_type: str = "user"         # "user" | "group"
     zotero_api_key_env: str = DEFAULT_API_KEY_ENV  # env var name; value read at runtime
@@ -210,7 +215,7 @@ def load_config(
         zotero_source_mode
         or os.environ.get("KB_ZOTERO_SOURCE")
         or zotero_block.get("source_mode")
-        or "live"
+        or "web"
     )
     mode = mode.lower().strip()
     if mode not in VALID_SOURCE_MODES:
