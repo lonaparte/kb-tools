@@ -5,6 +5,111 @@ All notable changes to ee-kb-tools.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is our own (calendar-ish, per-major-iteration).
 
+## [0.28.0] — 2026-04
+
+A feature + hardening release: new migration & doctor-fix surface,
+the end of the lock-re-entrancy / partial-embed saga, and a
+substantial code-organisation pass that splits four multi-thousand-
+line modules into focused submodules. Zotero web becomes the
+default metadata source.
+
+### Added
+
+- **`kb-write migrate-slugs`** — one-shot rename of thought mds
+  whose slugs violate the canonical lowercase-kebab format
+  (`^\d{4}-\d{2}-\d{2}-[a-z0-9][a-z0-9\-]*$`). Pre-v24 imports
+  wrote uppercase Zotero keys directly into thought filenames
+  (e.g. `2026-04-22-ABCD1234-note.md`); v24's slug rule flagged
+  these as violations but offered no migrator. The new tool
+  canonicalises in place — preserves the YYYY-MM-DD date,
+  lowercases the rest, substitutes disallowed chars with `-`,
+  collapses double-hyphens, strips edges. Refuses non-date-
+  prefixed slugs (reported as errors) and collisions (reported,
+  never overwrites). Idempotent — already-canonical files skipped.
+  Atomic rename via `shutil.move`, one batch git commit per run,
+  audit.log entries. `--dry-run` for preview.
+
+- **`kb-write doctor --fix` now dedupes kb_refs / kb_tags /
+  authors.** New check I flags list-field duplicates as a warning
+  with auto_fixable=True. `--fix` rewrites the frontmatter with
+  first-occurrence-wins order. Safe to auto-dedupe because these
+  fields are set-semantics downstream; duplicates only clutter
+  diffs. Malformed lists (non-list, non-string entries) are
+  skipped so `_check_frontmatter_types` handles them without
+  double-reporting.
+
+- **Per-paper write lock.** `kb_write.atomic.write_lock_paper(
+  kb_root, paper_key)` anchors at `.kb-mcp/paper-locks/<key>.lock`.
+  Used by tag add/remove, ref add/remove, ai-zone append — all
+  single-paper RMW ops. Different papers' writers now run in
+  parallel; same-paper writers still serialise so the RMW race
+  remains covered. Sanitises paper_key before filename use (the
+  kb-mcp upstream validator already rejects weird keys but this is
+  defense-in-depth).
+
+### Changed
+
+- **kb-importer default metadata source flipped from `live` to
+  `web`.** Zotero web API (api.zotero.org) needs only an API key
+  + library_id + network — no local Zotero install. Works
+  uniformly from laptops and headless servers, which is why it's
+  the portable default. `live` mode (localhost:23119, needs
+  Zotero desktop running) still works; set `source_mode: live`
+  in config or `--zotero-source live` on the CLI to get it.
+
+- **`write_lock()` switched from O_EXCL + PID-file to
+  `fcntl.flock`.** The prior protocol had an empty-file window
+  at acquisition: between `O_CREAT|O_EXCL` and the PID write,
+  another acquirer could unlink the empty file and recreate it,
+  leading to two processes both believing they held the lock.
+  The 0.27.4 field report of "95/100 tags landed out of 100
+  concurrent writes" was diagnosed as this — not a lock
+  re-entrancy bug as initially suspected. fcntl.flock uses
+  kernel state, not file presence, so there's no empty window.
+  Windows falls back to the PID-file shape (fcntl unavailable).
+
+- **Marker constants consolidated.** `FULLTEXT_START` /
+  `FULLTEXT_END` / `AI_ZONE_START` / `AI_ZONE_END` are now
+  imported from their canonical kb_core / kb_write.zones
+  sources instead of being re-declared across 8 sites. The
+  `check_package_consistency` lint was extended to accept the
+  `from kb_core import ..., NAME` form as well as the literal
+  `NAME = "..."` form so the consolidation doesn't fail the check.
+
+### Refactored (no behaviour change)
+
+- **`kb_write/cli.py`: 1115 → 139 lines.** Split into `commands/`
+  package with per-subcommand modules: init, node (thought+topic),
+  pref, zone (ai-zone), field (tag+ref), admin (delete+log+rules+
+  doctor), batch (re-summarize+re-read), migrate. Shared helpers
+  (_resolve_kb_root, _build_context, _read_body, _emit_result)
+  live in `commands/_shared.py`.
+
+- **`kb_mcp/indexer.py`: 1449 → 745 lines.** Three self-contained
+  passes extracted into sibling modules:
+  - `embedding_pass.py` — run_embedding_pass + chunk_paper (Phase 2b).
+  - `stale_cleanup.py` — remove_orphans + delete_stale_node_row.
+  - `link_resolve.py` — stage_refs + resolve_staged_links.
+  Module-level helpers (_extract_fulltext_body, _vec_blob, etc.)
+  moved to `_indexer_helpers.py`; indexer.py re-exports them so
+  `from kb_mcp.indexer import _extract_fulltext_body` keeps working.
+
+- **`kb_importer/commands/import_cmd.py`: 1505 → 407 lines.** Split
+  into three sibling modules: `import_keys.py` (key resolution),
+  `import_pipeline.py` (per-item processing + auto-commit),
+  `import_fulltext.py` (the 720-line PDF→LLM→writeback pass). The
+  slimmed `import_cmd.py` re-imports all the moved symbols so
+  `from kb_importer.commands.import_cmd import _process_paper`
+  still works.
+
+- **`kb_mcp/server.py`: 2132 → 1799 lines.** Extracted the argparse
+  builder (165 lines), logging setup, and the three `_cmd_*_impl`
+  citation subcommand implementations into `server_cli.py`. The
+  @mcp.tool() registrations stay in server.py (they share the
+  FastMCP instance). Impls now take `kb_root` as an explicit
+  parameter rather than reaching into server's module state; the
+  wrappers pass `_kb_root()` in.
+
 ## [0.27.10] — 2026-04
 
 Five bug fixes from a fresh external review. One data-

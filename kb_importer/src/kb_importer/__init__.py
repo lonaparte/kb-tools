@@ -13,4 +13,4 @@ fully offline operation without network.
 
 See the specification document for the full design.
 """
-__version__ = "0.27.10"
+__version__ = "0.28.0"
