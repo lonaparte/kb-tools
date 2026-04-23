@@ -30,10 +30,17 @@ def test_refresh_counts_no_db_friendly_error(tmp_path, monkeypatch):
 
     from kb_citations.cli import main
 
+    # argparse: top-level flags (--kb-root, --provider) must come
+    # BEFORE the subcommand. Prior version of this test put them
+    # after "refresh-counts", causing argparse to exit(2) before the
+    # code under test ever ran — and because SystemExit inherits
+    # from BaseException the test runner's narrower except clause
+    # was bypassed, killing the whole test run silently. Both were
+    # fixed in v0.27.4.
     argv = [
-        "refresh-counts",
         "--kb-root", str(tmp_path),
         "--provider", "semantic_scholar",
+        "refresh-counts",
     ]
 
     err = io.StringIO()

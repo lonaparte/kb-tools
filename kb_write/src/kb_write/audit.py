@@ -110,10 +110,23 @@ def record(
         if reindexed is not None:
             entry["reindexed"] = bool(reindexed)
         if _env_flag("KB_WRITE_AUDIT_INCLUDE_USER"):
+            # v0.27.4: use getpass.getuser() — it walks LOGNAME /
+            # USER / LNAME / USERNAME in that order and falls back
+            # to pwd lookup by euid. Prior version tried
+            # `os.getlogin()` first then `$USER`; both fail on a
+            # stripped-down shell environment (Claude Code / CI /
+            # container) where USER is empty but LOGNAME is set.
+            # Observed in field testing: audit log recorded
+            # `"user": "unknown"` even with the opt-in env var on,
+            # making the feature pointless in ~1/3 of real
+            # environments.
+            import getpass as _getpass
             try:
-                entry["user"] = os.getlogin()
-            except OSError:
-                entry["user"] = os.environ.get("USER") or "unknown"
+                entry["user"] = _getpass.getuser()
+            except (KeyError, OSError):
+                # Very exotic — no env vars AND no pwd entry for
+                # the euid. Preserve backwards-compat sentinel.
+                entry["user"] = "unknown"
         if note:
             entry["note"] = note
         if extra:

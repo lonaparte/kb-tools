@@ -5,6 +5,223 @@ All notable changes to ee-kb-tools.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is our own (calendar-ish, per-major-iteration).
 
+## [0.27.4] — 2026-04
+
+Fifth bug-fix pass. Addresses five items from the v0.27.3 field
+report that each turned out to be "I claimed this was fixed in a
+prior release but it wasn't." Credit for all findings to direct
+library testing.
+
+### Fixed
+
+- **Unit-test runner was killed mid-run by `SystemExit`.**
+  `_run_single_case` caught `Exception`, not `BaseException`.
+  When a test triggered argparse's `parser.exit()` or called
+  `sys.exit()`, the resulting `SystemExit` propagated past the
+  runner's handler and terminated the whole process — without
+  printing the summary line. The previous release's
+  "locked-by-test" claims for multiple items (refresh-counts
+  graceful error, note kind compat) were fiction: those tests
+  had latent bugs that triggered this path and were invisible
+  from the runner output. Now catches `BaseException` (still
+  lets `KeyboardInterrupt` propagate), so argparse-style exits
+  show up as FAIL instead of silently killing the run. Locked
+  by `tests/unit/test_runner_systemexit.py` which spawns a
+  subprocess runner against a fake `test_*.py` that raises
+  `SystemExit`.
+
+- **`test_note_kind_compat` used an invented `ZoteroItem`
+  shape.** Constructed with `extra={}`, `pdf_attachment_key=None`,
+  `notes="body"` — none of which are real fields on the
+  dataclass. `TypeError` at construction was a silent FAIL
+  hidden by the runner bug above. Rewritten against the real
+  dataclass shape (notes is `list[ZoteroNote]`, no extra /
+  pdf_attachment_key fields).
+
+- **`test_refresh_counts_no_db` used wrong argv order.**
+  Put `--kb-root` / `--provider` after the subcommand;
+  argparse rejects this at parse time and calls
+  `parser.exit(2)` — `SystemExit` — bypassed by the runner
+  bug. Argv now puts top-level flags before the subcommand.
+
+- **`test_report_generation` orphans assertion still
+  case-sensitive.** v0.27.1 added `"orphan"` as a marker for
+  the "found N orphans" report shape, but the actual section
+  body in a populated KB is `"## Orphans\n..."` (capital O) and
+  `"Archived attachment dirs not referenced by any imported
+  md (N)"` — neither contains lowercase `"orphan"` in a
+  matchable position without lowercasing. Now matches
+  case-insensitive and includes `"archived attachment"` as an
+  explicit marker.
+
+- **`kb-mcp serve` SIGTERM handler never fired.** Previous
+  implementation called `raise KeyboardInterrupt` inside the
+  signal handler, hoping `mcp.run()`'s asyncio loop would catch
+  it. In practice MCP stdio transport blocks on `readline()`
+  waiting for the next JSON-RPC message, and Python only runs
+  signal handlers between bytecode instructions — a blocking
+  syscall never returns to bytecode, so the handler never
+  executed. Result: `kill -TERM` hung for ~30s, then systemd
+  fell back to SIGKILL (exactly what the handler was meant to
+  prevent). Now closes the Store inside the handler — SQLite's
+  WAL-checkpoint in `store.close()` is synchronous and
+  doesn't need Python interpreter state in a good spot — then
+  calls `os._exit(0)` to bypass the interpreter entirely.
+  SIGINT now goes through the same path for consistency.
+
+- **`KB_WRITE_AUDIT_INCLUDE_USER=1` wrote `"unknown"` in
+  common environments.** Fallback chain was `os.getlogin()` →
+  `os.environ["USER"] or "unknown"`. In Claude Code / CI
+  shells where `$USER` is empty but `$LOGNAME` is set, this
+  hit "unknown" in ~1/3 of field environments. Now uses
+  `getpass.getuser()` which walks LOGNAME / USER / LNAME /
+  USERNAME and falls back to a pwd lookup by euid. Opt-in
+  feature now actually works across environments.
+
+### Added (mitigation — not full fix)
+
+- **`.git/index.lock` retry-with-backoff on concurrent writes.**
+  50-way parallel `kb-write thought create` with git-commit on
+  lost 3/50 commits in the field report (all 50 md files
+  landed on disk; only the commit step for 3 collided on the
+  index lock). Mitigation added: every `git add` / `git commit`
+  / `git diff --cached` goes through `_run_git_with_retry`,
+  which retries specifically on index.lock contention markers
+  with exponential backoff (0.05s → 0.1s → 0.2s → 0.4s,
+  max 5 attempts ≈ 0.75s total). Not a full fix — a truly
+  adversarial concurrent workload can still lose a commit —
+  but field observation was "3/50 at 50-way, 0/30 at 30-way",
+  so a sub-second retry window is expected to cover realistic
+  usage. Locked by `tests/unit/test_git_lock_retry.py` with
+  injected failures. Full fix (commit-tree + update-ref
+  pathway avoiding index.lock entirely) stays in 0.28 scope
+  for when someone hits the wall again.
+
+### Test infrastructure
+
+- Runner's monkeypatch already carried the needed features after
+  0.27.3 (chdir, setattr); nothing new there. This release is
+  pure behaviour fixes.
+
+### Honest retrospective
+
+Three items in this release's list had `CHANGELOG.md` entries
+in earlier 0.27.x claiming "locked by tests/unit/X.py". Those
+test files existed but never actually ran — the runner-bug +
+test-bug interaction meant the claim was unverifiable from the
+summary line. The 0.27.4 runner fix is what made the other
+four fixes testable. Takeaway: a `scripts/run_unit_tests.py`
+failure is an event that must block release, not a line to
+read past.
+
+## [0.27.3] — 2026-04
+
+Fixes a real rigidity in workspace autodetect. Previous
+versions only looked for the code's own install location
+(walking up from `__file__` for a `.ee-kb-tools/` ancestor).
+That worked for the deployed layout but left "install from
+`~/dev/kb-tools/`, run against `~/research/ee-kb/`" failing
+with "could not resolve workspace layout" unless the user
+remembered to `export KB_ROOT=...` every session.
+
+### Added — CWD-based autodetect
+
+`find_workspace_root()` now walks up from the user's current
+directory looking for any of:
+
+- a directory containing `ee-kb/` (user cd'd to the workspace
+  parent — the most common case)
+- the `ee-kb/` directory itself (user cd'd into the KB) —
+  walks up one more to the parent
+- a directory containing `.ee-kb-tools/` (deployed layout,
+  still works)
+
+This means the standard day-to-day flow is now:
+
+```bash
+# Anywhere on disk — one-time install, code stays put:
+cd /path/to/kb-tools
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e kb_core/ kb_importer/ kb_mcp/ kb_write/ kb_citations/
+
+# Any session thereafter, just cd and run:
+cd ~/research            # contains ee-kb/
+kb-mcp index             # autodetect finds it from CWD
+```
+
+No env vars, no `--kb-root`, no symlinks. Works regardless of
+where the source repo lives relative to the KB.
+
+### Precedence, complete list (in order)
+
+1. `--kb-root <path>` / `parent=` arg (explicit)
+2. `$KB_WORKSPACE`
+3. `$KB_ROOT`
+4. **New in 0.27.3**: autodetect from CWD
+5. Autodetect from code location (still works when code lives
+   under `.ee-kb-tools/`)
+
+### Error message improved
+
+When all five miss, the error now lists four concrete remedies
+instead of only mentioning `.ee-kb-tools/` siblings (which was
+confusing to users whose source repo wasn't named that).
+
+### Documentation rewrite
+
+`DEVELOPMENT.md` rewritten with zero concept of "dev vs deploy
+modes" — there's only one install-and-use flow. `DEPLOYMENT.md`
+clarified as a narrower document for the handoff / multi-user
+case (staging code into someone else's `.ee-kb-tools/`).
+
+### Code consolidation
+
+`kb_citations/config.py` and `kb_importer/config.py` no longer
+carry their own `_find_tools_dir` copies — they delegate to
+`kb_core.workspace.find_tools_dir`. Previously four packages
+had four copies of the same walk-up loop; v0.27 fixed two,
+this release fixes the other two.
+
+### Test infrastructure
+
+- `scripts/run_unit_tests.py` monkeypatch gains `chdir` and
+  `setattr` methods (needed to test autodetect behaviour
+  deterministically across the sandbox's own install layout).
+- `tests/unit/test_workspace_autodetect.py` covers all three
+  match shapes + the "nothing found" error shape, mocking out
+  code-location autodetect so the test doesn't accidentally
+  succeed from the sandbox's own `.ee-kb-tools/` ancestor.
+
+## [0.27.2] — 2026-04
+
+Documentation-only release. Adds a `DEVELOPMENT.md` walkthrough
+for the "edit in place" workflow — distinct from the deploy-to-
+user scenario already covered by `DEPLOYMENT.md`. README now
+points at both.
+
+### Added
+
+- **`DEVELOPMENT.md`** — how to run the code from an in-place
+  `kb-tools/` checkout: `pip install -e` inside the repo,
+  `export KB_ROOT=...` to point autodetect-less CLI commands at
+  your KB, common mistakes / remedies, how the editable install
+  interacts with `.egg-info/` (nothing committable).
+- **Extended `find_tools_dir` docstring** to document the dev-
+  mode caveat: autodetect looks for `.ee-kb-tools/` from the
+  code's install location, which means it returns None when
+  kb-tools lives in `~/dev/kb-tools/` and the KB lives in
+  `~/research/ee-kb/` — two separate trees. That's expected;
+  `KB_ROOT` env var is the dev-mode workaround.
+
+### Not changed
+
+- No behaviour changes. Workspace autodetect semantics identical
+  to 0.27.1. A brief 0.27.1 experiment that added `kb-tools` as
+  a recognised tools-dir name was reverted — the dev workflow
+  has code and KB in different parent trees, so autodetect
+  doesn't help regardless of what names we recognise. Env var
+  is the right abstraction.
+
 ## [0.27.1] — 2026-04
 
 Second bug-fix pass on the v0.27 line, responding to a second

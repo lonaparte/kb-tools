@@ -1950,9 +1950,32 @@ def main(argv: list[str] | None = None) -> int:
     # `kill`), flush the Store and close the SQLite connection before
     # exiting. Without this, the process could die with WAL/SHM files
     # dirty, leaving a partial journal that the next `kb-mcp index`
-    # run would need to recover. `mcp.run()` already handles SIGINT
-    # (Ctrl-C) via KeyboardInterrupt in the asyncio loop, but SIGTERM
-    # delivery on a headless server path wasn't wired.
+    # run would need to recover.
+    #
+    # v0.27.4 handler rework: a prior version of this handler did
+    # `raise KeyboardInterrupt` inside the signal handler, expecting
+    # mcp.run()'s asyncio loop to catch it like it does for Ctrl-C.
+    # That didn't work in practice — the MCP stdio transport blocks
+    # on readline() waiting for the next JSON-RPC message from the
+    # client, and Python only runs a signal handler between
+    # bytecode instructions. A blocking syscall never returns to
+    # bytecode, so the handler never fires. Result: `kill -TERM`
+    # did nothing, and systemd fell back to SIGKILL after
+    # TimeoutStopSec — exactly the problem this code was meant to
+    # prevent.
+    #
+    # The reliable fix is to close the store inside the handler
+    # (SQLite's WAL-checkpoint logic is synchronous and doesn't
+    # need the Python interpreter state to be in a good spot) and
+    # then call os._exit(). That bypasses atexit / GC, but the
+    # important "close the DB cleanly" part already ran.
+    #
+    # SIGINT is also wired to the same handler: mcp.run()'s own
+    # handler DOES work for it (readline returns with EINTR in
+    # some Python versions) but not reliably across platforms.
+    # Treating both signals uniformly is simpler and matches what
+    # an operator expects from Ctrl-C.
+    import os as _os
     import signal as _signal
 
     def _graceful_shutdown(signum, _frame):
@@ -1964,17 +1987,24 @@ def main(argv: list[str] | None = None) -> int:
                 _store.close()
         except Exception:
             log.exception("error closing store during shutdown")
-        # Re-raise as KeyboardInterrupt so mcp.run()'s asyncio loop
-        # exits through its existing clean-shutdown path.
-        raise KeyboardInterrupt
+        # os._exit bypasses the Python-level cleanup that normal
+        # exit() does — atexit callbacks, GC, stdio flush — but all
+        # the state that MATTERS (SQLite WAL checkpoint in
+        # _store.close() above) has already been flushed to disk.
+        # Using sys.exit() would raise SystemExit, which has the
+        # same "won't fire through a blocking read" problem as
+        # KeyboardInterrupt.
+        _os._exit(0)
 
-    try:
-        _signal.signal(_signal.SIGTERM, _graceful_shutdown)
-    except (ValueError, OSError):
-        # signal.signal() fails when called off the main thread;
-        # harmless in that case — the asyncio loop still handles
-        # SIGINT. Don't block `serve` over a signal-wiring edge case.
-        pass
+    for _sig in (_signal.SIGTERM, _signal.SIGINT):
+        try:
+            _signal.signal(_sig, _graceful_shutdown)
+        except (ValueError, OSError):
+            # signal.signal() fails when called off the main thread;
+            # harmless in that case — asyncio's own signal wiring
+            # remains. Don't block `serve` over a signal-wiring edge
+            # case.
+            pass
 
     log.info("kb-mcp serving; kb_root=%s, db=%s",
              _cfg.kb_root, _store.db_path)

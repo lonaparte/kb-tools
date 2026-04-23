@@ -173,10 +173,12 @@ sys.modules["pytest"] = _pytest_stub
 # ---------------------------------------------------------------------
 
 class _MonkeyPatch:
-    """Subset of pytest's MonkeyPatch — only env var methods."""
+    """Subset of pytest's MonkeyPatch — env vars, chdir, setattr."""
 
     def __init__(self):
         self._saved_env: dict[str, str | None] = {}
+        self._saved_cwd: str | None = None
+        self._saved_attrs: list[tuple[object, str, object]] = []
 
     def setenv(self, name: str, value: str) -> None:
         if name not in self._saved_env:
@@ -191,6 +193,19 @@ class _MonkeyPatch:
         elif raising:
             raise KeyError(name)
 
+    def chdir(self, path) -> None:
+        if self._saved_cwd is None:
+            self._saved_cwd = os.getcwd()
+        os.chdir(str(path))
+
+    def setattr(self, target, name, value, raising: bool = True) -> None:
+        """Limited setattr(target, name, value) — matches pytest's
+        positional form only."""
+        if raising and not hasattr(target, name):
+            raise AttributeError(name)
+        self._saved_attrs.append((target, name, getattr(target, name, None)))
+        setattr(target, name, value)
+
     def undo(self) -> None:
         for name, old in self._saved_env.items():
             if old is None:
@@ -198,6 +213,18 @@ class _MonkeyPatch:
             else:
                 os.environ[name] = old
         self._saved_env.clear()
+        if self._saved_cwd is not None:
+            try:
+                os.chdir(self._saved_cwd)
+            except OSError:
+                pass
+            self._saved_cwd = None
+        for target, name, old in reversed(self._saved_attrs):
+            try:
+                setattr(target, name, old)
+            except Exception:
+                pass
+        self._saved_attrs.clear()
 
 
 def _make_builtin_fixtures(tmpdir_stack: list):
@@ -366,7 +393,21 @@ def _run_single_case(
         return "PASS", ""
     except _SkipException as e:
         return "SKIP", str(e)
-    except Exception:
+    except BaseException as e:
+        # v0.27.4: broadened from Exception to BaseException. A test
+        # that triggers argparse's `parser.exit()` or calls
+        # `sys.exit()` raises SystemExit — which inherits from
+        # BaseException, not Exception. Prior runner let SystemExit
+        # propagate, killing the entire test run mid-way and
+        # suppressing the summary line. Observed in v0.27.1 field
+        # testing when `test_refresh_counts_no_db` passed an
+        # argparse-invalid argv; argparse responded with sys.exit(2)
+        # and the runner exited rc=2 without printing results.
+        #
+        # KeyboardInterrupt (Ctrl-C) is a legitimate "stop everything"
+        # signal, so let THAT propagate.
+        if isinstance(e, KeyboardInterrupt):
+            raise
         return "FAIL", traceback.format_exc()
     finally:
         # Cleanup monkeypatch + tmp dirs.

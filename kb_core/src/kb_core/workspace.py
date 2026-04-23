@@ -75,16 +75,19 @@ def find_tools_dir() -> Path | None:
     """Walk up from THIS module's location looking for `.ee-kb-tools`.
 
     Works for:
-      - editable install: file at
+      - code installed inside `.ee-kb-tools/` (the layout
+        `scripts/deploy.sh` produces): file at
         .../.ee-kb-tools/kb_core/src/kb_core/workspace.py →
         returns .../.ee-kb-tools
-      - site-packages: won't find `.ee-kb-tools/` ancestor; returns None
+      - code installed anywhere else (source checkout in
+        ~/dev/kb-tools/, site-packages from a wheel, etc.):
+        walks to filesystem root without finding `.ee-kb-tools/`
+        and returns None.
 
-    Note: this looks at THIS file's location, not the caller's, so
-    it only works when kb_core is installed in editable / src-layout
-    mode inside a `.ee-kb-tools/` directory. When kb_core is
-    installed from a wheel into site-packages, callers must fall
-    back to env vars or explicit args.
+    Returning None is not a failure — it just means the CLI
+    should rely on CWD autodetect (`find_workspace_root`) or
+    env vars instead. See `resolve_workspace` for the full
+    precedence list.
     """
     here = Path(__file__).resolve()
     for p in [here] + list(here.parents):
@@ -94,19 +97,44 @@ def find_tools_dir() -> Path | None:
 
 
 def find_workspace_root(start: Path | None = None) -> Path | None:
-    """Walk up from `start` (defaults to CWD) looking for an ancestor
-    that contains a `.ee-kb-tools/` subdir. Returns the parent
-    directory (the one containing both `.ee-kb-tools/` and, by
-    convention, `ee-kb/`), or None if none found.
+    """Walk up from `start` (defaults to CWD) looking for the KB
+    parent — the directory that contains `ee-kb/`. Returns that
+    parent, or None if none found.
 
-    This is the location-agnostic version — it looks from the user's
-    CWD rather than from this module's install location, so it works
-    regardless of how kb_core itself is installed.
+    Recognises three shapes (in precedence order), matching what
+    real users type:
+
+      1. CWD is the parent itself (has an `ee-kb/` subdir). Most
+         common case — user cd'd into their workspace.
+      2. CWD is inside `ee-kb/` (one of its descendants). User
+         navigated into papers or topics. We walk up until we
+         find the dir whose parent has `ee-kb/`.
+      3. CWD has a `.ee-kb-tools/` sibling-to-`ee-kb/` setup
+         (the deployed layout). This is a subset of case 1 —
+         `.ee-kb-tools/` sitting next to `ee-kb/` makes the
+         parent identifiable either way, but accepting
+         `.ee-kb-tools/` as a marker means the parent
+         resolves even before `ee-kb/` exists (e.g. right
+         after `deploy.sh` ran, before `kb-write init`).
+
+    The code's own install location is NOT consulted here —
+    that's `find_tools_dir`'s job, and only useful when the
+    code lives under `.ee-kb-tools/`. Separating them means
+    autodetect Just Works regardless of whether the source repo
+    is inside the workspace, next to it, in `~/dev/`, or
+    anywhere else on disk.
     """
     here = Path(start).resolve() if start is not None else Path.cwd().resolve()
     for p in [here] + list(here.parents):
-        if (p / TOOLS_DIR_NAME).is_dir():
+        # Case 1 + case 3: CWD (or an ancestor) directly contains
+        # `ee-kb/` or `.ee-kb-tools/`.
+        if (p / KB_DIR_NAME).is_dir() or (p / TOOLS_DIR_NAME).is_dir():
             return p
+        # Case 2: CWD is `ee-kb/` itself, or deeper inside it. The
+        # directory named `ee-kb/` found on the walk IS the KB;
+        # its parent is what we want.
+        if p.name == KB_DIR_NAME and p.is_dir():
+            return p.parent
     return None
 
 
@@ -156,16 +184,28 @@ def resolve_workspace(
         # warn (can't auto-derive zotero_root sibling).
         return _workspace_custom(kb, zotero_root)
 
-    # 4. Autodetect via .ee-kb-tools/.
+    # 4. Autodetect from CWD — walks up looking for a directory
+    #    containing ee-kb/ (or .ee-kb-tools/, or being ee-kb/ itself).
+    #    Handles the common "user cd'd to workspace / into KB and ran
+    #    a command" flow without any env var.
+    ws_root = find_workspace_root()
+    if ws_root is not None:
+        return _workspace_from_parent(ws_root, kb_root, zotero_root)
+
+    # 5. Autodetect from code location — last resort, only hits when
+    #    the code itself lives under .ee-kb-tools/ (deployed layout).
+    #    When the code lives elsewhere (e.g. ~/dev/kb-tools/), this
+    #    returns None and we fall through to the error below.
     tools = find_tools_dir()
     if tools is not None:
         return _workspace_from_parent(tools.parent, kb_root, zotero_root)
 
     raise WorkspaceError(
-        "could not resolve workspace layout. Set one of:\n"
-        "  KB_WORKSPACE=<parent dir containing .ee-kb-tools, ee-kb, zotero>\n"
-        "  KB_ROOT=<path to the ee-kb directory>\n"
-        "or pass --kb-root on the CLI."
+        "could not resolve workspace layout. Any ONE of:\n"
+        "  • cd into the directory containing `ee-kb/` and retry\n"
+        "  • export KB_ROOT=<path to your ee-kb directory>\n"
+        "  • export KB_WORKSPACE=<parent dir containing ee-kb/>\n"
+        "  • pass --kb-root <path> on the CLI"
     )
 
 

@@ -54,15 +54,14 @@ class CitationsContext:
 
 
 def _find_tools_dir() -> Path | None:
-    """Walk up from this module's install location looking for
-    `.ee-kb-tools`. Returns the directory or None. Standalone —
-    does not depend on kb_write.
+    """v0.27.3: delegates to kb_core.workspace.find_tools_dir so all
+    packages share one implementation. Prior to this, kb_citations,
+    kb_importer, kb_mcp, and kb_write each had their own copy — a
+    drift risk flagged by the v0.27 audit but fixed only for
+    kb_mcp and kb_write in that pass.
     """
-    here = Path(__file__).resolve()
-    for p in [here] + list(here.parents):
-        if p.name == ".ee-kb-tools":
-            return p
-    return None
+    from kb_core.workspace import find_tools_dir
+    return find_tools_dir()
 
 
 def find_workspace_config() -> Path | None:

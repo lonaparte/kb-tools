@@ -1,10 +1,21 @@
 # Deployment guide
 
+> For the **general install-and-use flow** (what most people
+> including contributors want), read [`DEVELOPMENT.md`](DEVELOPMENT.md).
+> That's the "install once, run from CWD" flow and it works
+> whether you're actively editing the code or just using it.
+>
+> This file is narrower: it's about putting the code into
+> SOMEONE ELSE'S workspace — e.g. an LLM agent setting up a
+> new user's machine from a handoff. It uses `scripts/deploy.sh`
+> to stage the code inside a `.ee-kb-tools/` directory next to
+> the user's `ee-kb/`.
+
 This document explains how to turn a cloned `kb-tools` repo into a
-working local install. **It is written to be read by an LLM agent
-acting on the user's behalf, not (only) by a human** — so it's
-explicit about filesystem paths, commands to run, and verification
-steps.
+working install on another machine. **It is written to be read by
+an LLM agent acting on the user's behalf, not (only) by a human** —
+so it's explicit about filesystem paths, commands to run, and
+verification steps.
 
 If you're an LLM agent: follow the steps in order. After each
 checkpoint, verify the expected state before continuing. On any

@@ -61,20 +61,18 @@ def _find_workspace_config() -> Path | None:
     """Locate `kb-importer.yaml` in the canonical
     `<parent>/.ee-kb-tools/config/` location.
 
-    Resolution: walk up from this module's install location to find
-    a `.ee-kb-tools/` ancestor; that ancestor's `config/` subdir is
-    the canonical config location. Returns None if the structure
-    isn't found (caller falls back to CLI args / env vars).
-
-    Does not depend on kb_write so kb-importer can be installed
-    standalone.
+    v0.27.3: delegates to kb_core.workspace.find_tools_dir so all
+    packages share one implementation. Returns None if no tools
+    dir is autodiscoverable (dev mode with source repo not under
+    `.ee-kb-tools/`) or if the config file doesn't exist in the
+    discovered dir. Caller falls back to CLI args / env vars.
     """
-    here = Path(__file__).resolve()
-    for p in [here] + list(here.parents):
-        if p.name == ".ee-kb-tools":
-            candidate = p / "config" / "kb-importer.yaml"
-            return candidate if candidate.exists() else None
-    return None
+    from kb_core.workspace import find_tools_dir
+    tools = find_tools_dir()
+    if tools is None:
+        return None
+    candidate = tools / "config" / "kb-importer.yaml"
+    return candidate if candidate.exists() else None
 
 
 @dataclass

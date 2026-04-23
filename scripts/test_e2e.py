@@ -699,28 +699,34 @@ def test_report_generation(tmp_kb: Path):
     )
     assert "already_processed: 5" in text2, text2
 
-    # orphans section: three legitimate output shapes exist.
+    # orphans section: multiple legitimate output shapes exist.
     # (1) kb_importer not installed on this path
     # (2) Zotero unreachable / cfg can't load
     # (3) scan succeeded + no orphans
-    # (4) scan succeeded + FOUND orphans (the case the v26.5
-    #     field test hit — 1218 archived attachments flagged
-    #     AssertionError here because this marker was missing).
+    # (4) scan succeeded + FOUND orphans — the case the v26.5
+    #     field test hit with 1218 archived attachments. v0.27.1
+    #     added an "orphan" marker for this, but tested
+    #     case-sensitive against body text like
+    #     "Archived attachment dirs not referenced..." which
+    #     doesn't contain the word "orphan" — the section HEADER
+    #     is "## Orphans" (capital O). The 0.27.1 fix still
+    #     AssertionError'd on real libraries. v0.27.4 matches
+    #     case-insensitively and against the actual body phrasing.
     text3 = generate_report(tmp_kb, days=30, sections=["orphans"])
     assert "## Orphans" in text3, text3
-    assert any(marker in text3 for marker in (
+    text3_lower = text3.lower()
+    assert any(marker in text3_lower for marker in (
         "kb_importer not installed",
         "could not load kb-importer config",
-        "Zotero unreachable",
-        "No orphans found",
-        # v27 fix — accept the "found orphans" report shape too.
-        # The section header includes a summary line like
-        # "Found N orphaned attachments" when the scan actually
-        # returns orphans; previously this test only accepted the
-        # three degrade paths + the zero-result path, failing on
-        # any real library that had genuine orphans.
-        "orphan",  # matches "Found 1218 orphaned attachments",
-                   # "orphaned attachments", "N orphans" etc.
+        "zotero unreachable",
+        "no orphans found",
+        # "Found N orphans" / "N orphaned attachments" style
+        "orphan",
+        # The specific body line produced when the scan succeeds
+        # and finds orphans (observed in v26.5 field report
+        # against a 1154-paper library with 1218 archived
+        # attachment dirs).
+        "archived attachment",
     )), text3
 
     ok("report: ops + skip + re_read + re_summarize aggregation; orphans degrades gracefully")

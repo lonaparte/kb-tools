@@ -23,6 +23,53 @@ class GitError(Exception):
     pass
 
 
+# v0.27.4: bounded retry-with-backoff for git operations that can
+# race on .git/index.lock. When multiple kb-write processes commit
+# concurrently against the same repo, each takes the index lock for
+# its `add` + `commit` window. Git doesn't queue lock acquisition —
+# the loser sees "Another git process seems to be running in this
+# repository" and exits 128. At 50-way concurrency the collision
+# rate is small but non-zero (field report: 3/50 commits lost even
+# though all 50 md writes landed on disk).
+#
+# Retry caps at ~1s total (0.05 + 0.1 + 0.2 + 0.4 = 0.75s) which is
+# enough to outwait a typical commit (~20ms for a single-file
+# staging + commit on SSD) but short enough that a truly-stuck lock
+# file (crashed git process) surfaces promptly.
+_LOCK_ERROR_MARKERS = (
+    "another git process seems to be running",
+    "index.lock",
+    "unable to create",
+)
+
+
+def _run_git_with_retry(argv: list[str], *, max_attempts: int = 5):
+    """Run a git subprocess, retrying on .git/index.lock contention.
+
+    Returns the CompletedProcess (caller inspects returncode). Any
+    non-lock error returns after the first attempt. Lock errors
+    retry with exponential backoff capped by max_attempts.
+    """
+    import time
+
+    last = None
+    delay = 0.05
+    for attempt in range(max_attempts):
+        r = subprocess.run(argv, capture_output=True, text=True, check=False)
+        last = r
+        if r.returncode == 0:
+            return r
+        # Only retry on index.lock contention.
+        err_low = (r.stderr + r.stdout).lower()
+        if not any(m in err_low for m in _LOCK_ERROR_MARKERS):
+            return r
+        if attempt == max_attempts - 1:
+            return r
+        time.sleep(delay)
+        delay = min(delay * 2, 0.5)
+    return last
+
+
 def is_git_repo(kb_root: Path) -> bool:
     """Check whether kb_root is (or is inside) a git repository."""
     try:
@@ -79,10 +126,11 @@ def auto_commit(
     if not files:
         return None
 
-    # Stage.
-    r = subprocess.run(
+    # Stage. Goes through the retry wrapper — `git add` takes the
+    # index lock too, and on a busy repo is the more common point
+    # to collide since `add` happens before `commit`.
+    r = _run_git_with_retry(
         ["git", "-C", str(kb_root), "add", "--"] + [str(f) for f in files],
-        capture_output=True, text=True, check=False,
     )
     if r.returncode != 0:
         raise GitError(f"git add failed: {r.stderr.strip()}")
@@ -129,10 +177,12 @@ def _commit_if_staged(
 ) -> str | None:
     """Shared tail: check `git diff --cached --quiet`, commit if
     non-clean, return SHA."""
-    # Check whether anything is actually staged.
-    r = subprocess.run(
+    # Check whether anything is actually staged. Uses the retry
+    # wrapper too — `git diff --cached` itself doesn't TAKE the
+    # lock but reads the index, and a mid-commit race can briefly
+    # surface transient errors.
+    r = _run_git_with_retry(
         ["git", "-C", str(kb_root), "diff", "--cached", "--quiet"],
-        capture_output=True, text=True, check=False,
     )
     if r.returncode == 0:
         log.debug("auto_commit: nothing to commit for %s.", target)
@@ -146,9 +196,8 @@ def _commit_if_staged(
         msg_parts.append(message_body.rstrip())
     full_msg = "\n".join(msg_parts)
 
-    r = subprocess.run(
+    r = _run_git_with_retry(
         ["git", "-C", str(kb_root), "commit", "-m", full_msg],
-        capture_output=True, text=True, check=False,
     )
     if r.returncode != 0:
         raise GitError(f"git commit failed: {r.stderr.strip() or r.stdout.strip()}")

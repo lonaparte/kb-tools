@@ -27,15 +27,42 @@ class TestMdBuilder:
         """Fresh imports since v27 write the short form."""
         _skip_if_no_frontmatter()
         from kb_importer.md_builder import _build_note_frontmatter
-        from kb_importer.zotero_reader import ZoteroItem
+        from kb_importer.zotero_reader import ZoteroItem, ZoteroNote
 
+        # Build a standalone-note ZoteroItem with the real v0.27.x
+        # dataclass shape. Previously this test constructed an
+        # invented shape (extra=, pdf_attachment_key=, notes="str")
+        # and silently TypeError'd inside the runner — reported in
+        # v0.27.1 field testing as a CHANGELOG liability ("locked by
+        # tests/unit/test_note_kind_compat.py" was fiction until
+        # this fix).
         item = ZoteroItem(
-            key="TESTKEY8", version=1, item_type="note",
-            title="Test Note", authors=[], year=None,
-            abstract=None, tags=(), notes="body",
-            date_added="2026-01-01", date_modified="2026-01-01",
-            doi=None, url=None, collections=(),
-            extra={}, pdf_attachment_key=None,
+            key="TESTKEY8",
+            version=1,
+            item_type="note",
+            title="Test Note",
+            authors=[],
+            year=None,
+            date="",
+            publication="",
+            doi="",
+            url="",
+            abstract="",
+            citation_key="",
+            tags=[],
+            collections=[],
+            date_added="2026-01-01",
+            date_modified="2026-01-01",
+            notes=[ZoteroNote(
+                key="N1",
+                version=1,
+                parent_key=None,
+                html="<p>body</p>",
+                date_added="2026-01-01",
+                date_modified="2026-01-01",
+                tags=[],
+            )],
+            attachments=[],
         )
         fm = _build_note_frontmatter(item)
         assert fm["kind"] == "note", (
