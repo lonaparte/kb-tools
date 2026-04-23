@@ -39,7 +39,7 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 
-from ..atomic import atomic_write, write_lock
+from ..atomic import atomic_write, write_lock, write_lock_paper
 from ..config import WriteContext
 from ..git import auto_commit
 from ..paths import NodeAddress, parse_target
@@ -131,7 +131,8 @@ def append(
             address=address, md_path=md_path, mtime=0.0, diff=diff,
         )
 
-    with write_lock(ctx.kb_root) if ctx.lock else _nullcontext():
+    # v0.28.0: per-paper lock — see tag.py for rationale.
+    with write_lock_paper(ctx.kb_root, address.key) if ctx.lock else _nullcontext():
         atomic_write(md_path, new_text, expected_mtime=expected_mtime)
         new_mtime = md_path.stat().st_mtime
 

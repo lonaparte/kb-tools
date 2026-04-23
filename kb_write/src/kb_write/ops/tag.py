@@ -9,7 +9,7 @@ frontmatter field — never zotero_tags, never body, never AI zone.
 """
 from __future__ import annotations
 
-from ..atomic import write_lock
+from ..atomic import write_lock, write_lock_paper
 from ..config import WriteContext
 from ..frontmatter import read_md, write_md, merge_kb_fields, remove_from_kb_list
 from ..git import auto_commit
@@ -58,7 +58,11 @@ def add(
             )
         return WriteResult(address=address, md_path=md_path, mtime=0.0)
 
-    with write_lock(ctx.kb_root) if ctx.lock else _nullcontext():
+    # v0.28.0: per-paper lock, not KB-root lock. Tag add/remove is
+    # single-md scoped; global lock blocks concurrent writes to
+    # OTHER papers unnecessarily. Per-paper lock still serialises
+    # same-paper RMW so lost-update races are impossible.
+    with write_lock_paper(ctx.kb_root, address.key) if ctx.lock else _nullcontext():
         existing_fm, body, actual_mtime = read_md(md_path)
         new_fm = merge_kb_fields(existing_fm, {"kb_tags": [tag]})
         if new_fm.get("kb_tags") == existing_fm.get("kb_tags"):
@@ -125,7 +129,11 @@ def remove(
             )
         return WriteResult(address=address, md_path=md_path, mtime=0.0)
 
-    with write_lock(ctx.kb_root) if ctx.lock else _nullcontext():
+    # v0.28.0: per-paper lock, not KB-root lock. Tag add/remove is
+    # single-md scoped; global lock blocks concurrent writes to
+    # OTHER papers unnecessarily. Per-paper lock still serialises
+    # same-paper RMW so lost-update races are impossible.
+    with write_lock_paper(ctx.kb_root, address.key) if ctx.lock else _nullcontext():
         existing_fm, body, actual_mtime = read_md(md_path)
         new_fm = remove_from_kb_list(existing_fm, "kb_tags", tag)
         if new_fm.get("kb_tags") == existing_fm.get("kb_tags"):
