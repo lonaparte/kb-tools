@@ -1,0 +1,56 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "kb-importer"
+version = "0.1.0"
+description = "Translate a Zotero library into KB markdown files via the Zotero local API."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "ee-kb" }]
+keywords = ["zotero", "bibliography", "markdown", "llm", "pdf"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Text Processing :: Markup :: Markdown",
+    "Topic :: Scientific/Engineering",
+]
+dependencies = [
+    "kb-core>=0.1.0",
+    "pyzotero>=1.5.20",
+    "python-frontmatter>=1.0.0",
+    "markdownify>=0.11.6",
+    "PyYAML>=6.0",
+    # Hard dep: kb_importer writes every md through kb_write.atomic
+    # (see md_io.py, longform.py) and uses kb_write.git for auto-
+    # commits (see commands/import_cmd.py). These imports are
+    # unconditional — kb-importer won't import without kb-write
+    # installed. The version is pinned loosely to the same v26
+    # bundle release; workspace-consistency lint enforces the
+    # actual VERSION match.
+    "kb-write>=0.1.0",
+]
+
+[project.scripts]
+kb-importer = "kb_importer.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/kb_importer"]
+
+[tool.hatch.build.targets.wheel.force-include]
+# Templates ship inside the package so `pip install` users can read
+# them via importlib.resources (see summary_cmd.py `show-template`).
+"src/kb_importer/templates" = "kb_importer/templates"
+
+[tool.hatch.build.targets.sdist]
+include = ["src/kb_importer", "README.md", "pyproject.toml"]

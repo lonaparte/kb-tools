@@ -1,0 +1,74 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment / secrets — NEVER commit these
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+credentials.json
+secrets.yaml
+
+# Config files a user might fill in with actual secrets
+# (the *.yaml in kb_write/src/kb_write/scaffold/ are scaffold templates
+# distributed with the package — those stay. These catch user copies.)
+config_kb_importer.yaml
+config_kb_mcp.yaml
+config_kb_citations.yaml
+/config.yaml
+
+# Test + coverage
+.coverage
+.coverage.*
+.cache
+.pytest_cache/
+htmlcov/
+coverage.xml
+
+# User's working KB (if they run the tools from here accidentally)
+ee-kb/
+.kb-mcp/
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
+# Local notes / scratch
+scratch/
+NOTES.md
+TODO.md

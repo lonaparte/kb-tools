@@ -1,0 +1,52 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "kb-citations"
+version = "0.1.0"
+description = "Fetch paper-to-paper citation edges from public APIs (Semantic Scholar, OpenAlex) and inject them into the ee-kb link graph."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "ee-kb" }]
+keywords = ["citations", "semantic-scholar", "openalex", "bibliography"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+]
+# Light deps: only httpx for HTTP, python-frontmatter for parsing
+# paper md to extract DOIs. Reuses kb_mcp's SQLite layer via a
+# soft-import fallback.
+dependencies = [
+    "kb-core>=0.1.0",
+    "httpx>=0.27",
+    "python-frontmatter>=1.0.0",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+# To actually write into kb_mcp's links table, we need kb_mcp.
+# Without it, `kb-citations fetch` still works (produces JSON
+# cache) but `kb-citations link` has no destination.
+link = [
+    "kb-mcp>=0.2.0",
+]
+
+[project.scripts]
+kb-citations = "kb_citations.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/kb_citations"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/kb_citations", "README.md", "pyproject.toml"]

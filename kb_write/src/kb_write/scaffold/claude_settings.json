@@ -1,0 +1,55 @@
+{
+  "$schema_comment": "Claude Code project-level permissions. See https://code.claude.com/docs/en/permissions",
+  "$rationale_comment": [
+    "Auto-approve the four ee-kb toolchain CLIs (kb-write, kb-mcp, ",
+    "kb-importer, kb-citations) plus safe read-only git operations. ",
+    "Everything else falls back to Claude Code's default (ask before ",
+    "running). Deny list covers destructive ops that shouldn't run ",
+    "without an explicit human yes.",
+    "",
+    "Pattern syntax: Bash(kb-write:*) = 'any kb-write subcommand'. ",
+    "The :* is mandatory — Bash(kb-write) alone only matches the ",
+    "bare command with no args.",
+    "",
+    "Scope: this file is COMMITTED to the KB repo; it applies to ",
+    "anyone using Claude Code in this KB. Personal overrides go in ",
+    ".claude/settings.local.json (gitignored)."
+  ],
+  "permissions": {
+    "allow": [
+      "Bash(kb-write:*)",
+      "Bash(kb-mcp:*)",
+      "Bash(kb-importer:*)",
+      "Bash(kb-citations:*)",
+
+      "Bash(git status)",
+      "Bash(git status:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git diff:*)",
+      "Bash(git branch:*)",
+      "Bash(git blame:*)",
+
+      "Read(./**)",
+      "Glob(./**)",
+      "Grep(./**)"
+    ],
+    "deny": [
+      "Bash(rm -rf:*)",
+      "Bash(rm -rf /:*)",
+      "Bash(git push:*)",
+      "Bash(git reset --hard:*)",
+      "Bash(git clean -fdx:*)",
+      "Bash(sudo:*)",
+
+      "Read(.env)",
+      "Read(.env.*)",
+      "Read(**/.env)",
+      "Read(**/.env.*)",
+      "Read(**/id_rsa)",
+      "Read(**/id_ed25519)",
+      "Read(**/.aws/credentials)",
+      "Read(**/.ssh/**)"
+    ]
+  }
+}
