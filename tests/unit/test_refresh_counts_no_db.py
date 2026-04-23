@@ -19,8 +19,27 @@ def _skip_if_no_httpx():
         pytest.skip("httpx not installed; kb_citations unavailable")
 
 
+def _skip_if_no_frontmatter():
+    """`kb_citations.cli` transitively imports
+    `kb_citations.resolver` which hard-imports `frontmatter`
+    at module top. Without python-frontmatter installed, the
+    `from kb_citations.cli import main` line below fails with
+    ModuleNotFoundError at test execution (collection works;
+    failure shows up as a test fail rather than skip). v0.28.1
+    added this guard so stdlib-only CI runs correctly SKIP
+    rather than FAIL this test."""
+    try:
+        import frontmatter  # noqa: F401
+    except ImportError:
+        pytest.skip(
+            "python-frontmatter not installed; "
+            "kb_citations.resolver requires it"
+        )
+
+
 def test_refresh_counts_no_db_friendly_error(tmp_path, monkeypatch):
     _skip_if_no_httpx()
+    _skip_if_no_frontmatter()
     # Clean KB with no projection DB.
     (tmp_path / ".kb-mcp").mkdir()
 

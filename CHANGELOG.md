@@ -5,6 +5,309 @@ All notable changes to ee-kb-tools.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is our own (calendar-ish, per-major-iteration).
 
+## [0.27.8] — 2026-04
+
+Release-hygiene pass after 0.27.7. Three consecutive bumps in
+0.27.5 / 0.27.6 / 0.27.7 updated the top-level `VERSION` file
+and each package's `__init__.__version__` but missed the
+`pyproject.toml` `version = "…"` field in every package.
+`scripts/check_package_consistency.py` flagged the drift. In
+the same review pass, the test-suite skip-guard convention
+was found to have been dropped in every test file added since
+0.27.5. This release catches up.
+
+(One prior release sequence briefly published a 0.28.0 minor
+bump on the migrate-legacy-chapters commit; that was
+retracted in 0.27.7, which reassigns that work as a
+patch-level batch. See the 0.27.7 entry for the rationale.)
+
+### Fixed
+
+- **`pyproject.toml` versions + cross-deps lagged behind
+  `VERSION`/`__version__` by up to three patch bumps.** The
+  0.27.5 → 0.27.6 → 0.27.7 chain updated the top-level
+  `VERSION` file and each package's `__init__.__version__`,
+  but missed the `pyproject.toml` `version = "…"` field in
+  all five packages. Cross-dep constraints like
+  `"kb-core>=0.27.4"`/`"kb-write>=0.1.0"`/`"kb-mcp>=0.2.0"`
+  were also stale. Bumped all five package versions to 0.27.8
+  and tightened all internal cross-deps to `>=0.27.7` so the
+  bundle is installed as one coherent release, matching the
+  intent the inline comments in those files already express.
+  Locked by the pre-existing
+  `scripts/check_package_consistency.py` lint.
+
+- **Three of the four test files added in
+  0.27.5 / 0.27.6 / 0.27.7 lacked the optional-dep
+  skip-guard the codebase convention requires.** `test_lazy_reindex_cooldown.py` and
+  `test_malloc_trim_cadence.py` transitively
+  `import kb_mcp.server`, which module-hard-imports
+  `FastMCP` from the `mcp` package.
+  `test_migrate_chapters.py` transitively needs
+  `python-frontmatter` after this release's fail-fast
+  refactor (see below). Without skip-guards these tests turn
+  into *failures* in stdlib-only CI runs, violating the
+  "`run_unit_tests.py` failure is an event that must block
+  release" rule we wrote into the 0.27.4 changelog. Added
+  `_skip_if_no_mcp` / `_skip_if_no_frontmatter` helpers
+  following the `test_note_kind_compat.py` convention, called
+  at the top of every test function (after docstrings where
+  present). `test_re_read_classifier.py` was audited,
+  confirmed hermetic, and needs no guard.
+
+- **`kb_write.ops.migrate_chapters` masked
+  ModuleNotFoundError as "bad frontmatter" per-file.** The
+  0.27.7 shape had three in-function `import frontmatter`
+  calls inside functions whose callers catch `Exception as e`
+  to classify per-file parse failures. When python-frontmatter
+  was missing, every legacy chapter generated an identical
+  "bad frontmatter: No module named 'frontmatter'" line in
+  `report.errors`, making it look like a 182-file data
+  corruption when it was actually one missing dep. Moved the
+  import to module top as a hard dep with a clear
+  `raise ImportError("…install python-frontmatter or install
+  kb-importer…")` so the real cause surfaces at command
+  invocation. All three in-function imports replaced with
+  uses of the module-level `_frontmatter` alias.
+
+- **`kb_mcp.tools.snapshot` passed no `filter=` to
+  `tar.extractall`.** Python 3.14 deprecates the no-filter
+  default; even on 3.13 the call emitted a DeprecationWarning
+  that bled into test runs. Added `filter="data"` as
+  belt-and-braces alongside the existing `_is_safe_member`
+  pre-filter (which remains the primary defence — it's
+  stricter than tarfile's "data" filter, rejecting
+  symlinks/hardlinks/devices outright rather than allowing
+  relative symlinks).
+
+### Code hygiene
+
+- **`kb_write.ops.migrate_chapters` dropped two unused
+  imports** (`WriteExistsError`, `Iterable`) flagged by the
+  audit.
+
+### Deferred (flagged again, not addressed this release)
+
+- **`kb_mcp.server` hard-imports `mcp.server.fastmcp` at
+  module top** while soft-importing `kb_write`, making
+  server-level tests fragile in mcp-less environments. Root
+  cause is the server file mixing mcp-protocol layer with
+  mcp-free business logic. Fixing cleanly means splitting
+  `server.py` into `server_runtime.py` (TTL, trim, state) +
+  `server_mcp.py` (FastMCP registration) — v0.28 file-split
+  scope per the existing roadmap. The skip-guards added
+  this release are the portable workaround until that
+  split lands.
+
+- **Big files keep getting bigger** — `server.py` 2132 lines,
+  `import_cmd.py` 1505, `indexer.py` 1247, `cli.py` 1082.
+  This release adds ~45 lines net (fail-fast import, tar
+  filter, skip guards in tests). Still the largest structural
+  debt item; on the v0.28 file-split track.
+
+- **`re_read` / `re_summarize` classifiers are near-duplicate**
+  logic. Extraction to `kb_core.classifier` would let a
+  future third caller avoid a third copy; noted but not done
+  (current count is exactly two, cost/benefit doesn't clear
+  the bar).
+
+## [0.27.7] — 2026-04
+
+Patch bump. Ships a one-shot data-migration utility for pre-v24
+libraries. Treated as patch (not minor) by project convention:
+minor bumps are reserved for new modalities or surfaces; a
+cleanup tool for legacy data layout stays in the 0.27.x line.
+
+### Added
+
+- **`kb-write migrate-legacy-chapters` one-shot migration.**
+  User libraries imported under the pre-v24 longform pipeline
+  accumulate chapter mds under
+  `thoughts/<date>-<KEY>-ch<NN>-<slug>.md` with
+  `kind: thought`. The v26 data model treats chapters as
+  first-class paper mds sharing the parent's `zotero_key`,
+  at `papers/<KEY>-chNN.md` with `kind: paper`.
+  `kb-mcp index-status --deep` has flagged this since v26
+  but offered no auto-fix — the field report flagged 182
+  orphaned chapters on the 1154-paper test library as a P1
+  ask.
+
+  The new subcommand:
+
+    - Scans `thoughts/` for filenames matching
+      `<YYYY-MM-DD>-<KEY>-ch<NN>-<slug>.md` where KEY is the
+      8-char Zotero-key shape.
+    - Filters: requires `kind: thought` +
+      (`source_chapter:` or `source_type: book_chapter`) so
+      a plain thought whose filename happens to include
+      `-chNN-` is NOT rewritten.
+    - For each match: write `papers/<KEY>-chNN.md` via
+      `atomic_write(create_only)`, preserve body content
+      verbatim (no LLM call), then delete the old thought.
+    - One batch git commit for the whole run (not 182
+      per-file commits).
+    - Idempotent: re-runs detect `papers/<KEY>-chNN.md`
+      with matching `zotero_key + chapter_number` and skip.
+    - Collision: target exists with *different* key/chno →
+      skip + report, old thought left in place for user
+      inspection.
+    - `--dry-run`: print the plan, don't write.
+
+  Live-run on the real 1154-paper library: 182 thoughts →
+  182 chapter papers in a single commit, 0 collisions, 0
+  errors. `kb-mcp index-status --deep` no longer reports v25
+  legacy paths after the migration.
+
+  Locked by 9 cases in `tests/unit/test_migrate_chapters.py`:
+  detection (positive + ordinary-thought false-positive
+  guard + non-chapter-filename skip), dry-run behaviour,
+  idempotency, collision reporting, produced-md canonical
+  shape, and body byte-for-byte preservation through
+  unicode / formulas / fenced code blocks.
+
+## [0.27.6] — 2026-04
+
+Single bug fix. Brings `re_read`'s failure classifier into
+parity with the 0.27.1 upgrade done for `re_summarize`.
+
+### Fixed
+
+- **`re_read` failure classifier over-reported LLM failures.**
+  The re-summarize classifier was armored in 0.27.1 (new
+  `skip_bad_target` category, preference for
+  `exception.code`, broadened substring fallback). The
+  re-read classifier — its sibling for the batch path,
+  calling `re_summarize` internally and bucketing the
+  `ReSummarizeError` it gets back — wasn't updated at the
+  same time and therefore over-reported "LLM failures":
+
+    - a batch-selected paper whose md was deleted between
+      selection and execution landed in `skip_llm_error`
+      (should be `skip_bad_target`)
+    - a paper with no `zotero_attachment_keys` in
+      frontmatter — the exact v26.5 field report wording —
+      landed in `skip_llm_error` (should be
+      `skip_pdf_missing`)
+    - LLM responses containing "cannot locate" rather than
+      "missing"/"not found"/"no pdf" landed in
+      `skip_llm_error` (should be `skip_pdf_missing`)
+
+  Fix:
+
+    - `kb_importer/events.py`: new
+      `RE_READ_SKIP_BAD_TARGET = "skip_bad_target"`
+      category, added to `_ALLOWED_RE_READ_CATEGORIES`.
+    - `kb_write/ops/re_read.py`: classifier now recognises
+      exception codes
+      `no_attachment_keys` → `skip_pdf_missing` and
+      `bad_target`/`md_not_found`/`paper_not_found` →
+      `skip_bad_target`. Substring fallback now checks
+      "paper md not found"/"paper not found"/
+      "md … not found" BEFORE the LLM fallback, and the
+      PDF-locate branch covers "cannot locate" and
+      "no zotero_attachment_keys".
+    - `kb_write/selectors/unread_first.py`: `executed_cats`
+      (the "attempt was made, don't pick again" set in the
+      unread-first selector) gains
+      `RE_READ_SKIP_BAD_TARGET` so the selector doesn't
+      keep re-picking the same stale key forever.
+      Docstring note added: any newly-added
+      `RE_READ_SKIP_*` category is an "attempt" by default
+      unless explicitly documented otherwise.
+
+  Locked by 15 cases in
+  `tests/unit/test_re_read_classifier.py`: 7
+  `TestCodeFirst` cases (one per code value + the
+  "unknown code defaults to `skip_llm_error`" forward-compat
+  invariant), 6 `TestSubstringFallback` cases exactly
+  matching the gaps 0.27.5 shipped with, 1 unknown-code-
+  no-substring-fallthrough invariant, and 1
+  `TestSelectorCompat` verifying the unread-first selector
+  sees the new category.
+
+## [0.27.5] — 2026-04
+
+Three bug fixes bundled. No behaviour change on the standard
+lock-on write path; improvements land on the edge cases
+(concurrent writes, long MCP sessions).
+
+### Fixed
+
+- **`kb_write` auto-commit retry on HEAD ref-lock contention,
+  not only `.git/index.lock`.** The 0.27.4 exponential-
+  backoff retry matched only `index.lock` phrasings. Git
+  holds two serialising locks during a commit: the index
+  lock (`.git/index.lock`) during staging and the HEAD ref
+  lock (`.git/HEAD.lock`, or `.git/refs/heads/<br>.lock`)
+  during the final ref update. Field report at 100-way
+  concurrent `kb-write thought create` (via `--no-lock`)
+  showed the HEAD-ref lock firing separately with
+  `"cannot lock ref 'HEAD': is at <sha> but expected <sha>"`
+  — not caught by the old marker list. Added markers
+  `"cannot lock ref"` and `"ref lock"` (covers both git
+  phrasings). Same retry schedule (0.05 → 0.1 → 0.2 → 0.4s,
+  5 attempts ≈ 0.75s total). Locked by two new cases in
+  `tests/unit/test_git_lock_retry.py`.
+
+- **`kb_write` auto-commit now scopes each commit to its
+  own file via pathspec.** Under concurrent commits without
+  kb-write's outer lock, the old shape
+  `git add FILE` + `git commit` committed the whole index
+  (so a sibling `git add file_S` between our add and commit
+  would drag file_S into our commit; the subject
+  `create_thought: thoughts/me` became a lie). When a
+  sibling committed first our own `git commit` exited
+  non-zero with "nothing added to commit" — surfaced as
+  `GitError` even though our md was on disk and in git
+  under the sibling's commit. Field report at 100-way
+  `--no-lock`: 68/100 hit this path, all with mds intact.
+  Fix: pass `files` as a pathspec to both
+  `git diff --cached --quiet -- FILE` and
+  `git commit -m MSG -- FILE`. Each auto-commit is now
+  scoped to exactly its caller's file. If a sibling
+  committed our file first, the "nothing to commit" /
+  "nothing added to commit" / "no changes added to commit"
+  wording is swallowed silently (return None). Pre-commit
+  hook rejections and other real failures still raise
+  `GitError`. `commit_staged()` (used by delete, which
+  pre-stages via `git rm`) keeps the whole-index semantics
+  by passing no pathspec. Locked by 5 cases in
+  `tests/unit/test_auto_commit_pathspec.py`.
+
+- **`kb_mcp.serve` long-session memory growth capped.** The
+  0.27.4 CHANGELOG acknowledged "+24 MB RSS / 90 tool
+  calls" as "still not profiled, v0.28 scope". tracemalloc
+  confirmed Python-object growth per `_lazy_reindex` was
+  <10 KB while RSS grew +156 KB/call — the rest is SQLite's
+  C-level page + statement cache plus glibc arena retention
+  (freed memory the allocator doesn't return to the OS).
+  Two bounded-cost levers:
+
+    - `_LAZY_REINDEX_COOLDOWN_S` (default 1.0s, env
+      `KB_MCP_LAZY_REINDEX_COOLDOWN_S` override). Back-to-
+      back tool calls within an agent burst skip the
+      reindex until the cooldown elapses. Failed reindexes
+      do NOT stamp the timestamp — otherwise a one-off
+      failure would mask subsequent errors across the
+      cooldown window.
+    - Periodic glibc `malloc_trim(0)` cadence (default
+      every 16 `_lazy_reindex` calls, env
+      `KB_MCP_MALLOC_TRIM_EVERY` override). Explicitly asks
+      glibc to shrink the heap past its high-water mark.
+      Non-glibc platforms (musl, macOS) probe the symbol
+      once and disable the path; no-op.
+
+  Measured (`mcp-stress` on 1154-paper library, 96 tool
+  calls): before +24 MB, linearly growing; after +12.7 MB,
+  stable after round 2 (with a reclaim dip at round 8).
+  Qualitative change from "linear growth, unbounded" to
+  "bounded steady-state with reclaim dips". Locked by 12
+  cases across
+  `tests/unit/test_lazy_reindex_cooldown.py` and
+  `tests/unit/test_malloc_trim_cadence.py`. Remaining
+  steady-state baseline (~+12 MB) is mostly SQLite page
+  cache and stays in v0.28 scope.
+
 ## [0.27.4] — 2026-04
 
 Fifth bug-fix pass. Addresses five items from the v0.27.3 field

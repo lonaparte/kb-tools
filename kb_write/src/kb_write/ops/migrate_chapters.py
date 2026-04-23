@@ -41,11 +41,36 @@ import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable
 
-from ..atomic import atomic_write, WriteExistsError
+from ..atomic import atomic_write
 from ..audit import record as _audit_record
 from ..config import WriteContext
+
+
+# Hard dependency. v0.28.0 shipped this module with three in-function
+# `import frontmatter` calls — when python-frontmatter was missing,
+# the ModuleNotFoundError got caught by the outer `except Exception`
+# in _build_plan and surfaced as N identical "bad frontmatter"
+# per-file errors. That's misleading: the root cause is missing
+# deps, not user data corruption. Fail-fast at module import with a
+# clear actionable message instead.
+#
+# python-frontmatter is also declared as a runtime dep in
+# kb_importer/pyproject.toml (hence available in the standard
+# bundle), and kb_write soft-depends on kb_importer; the only way
+# to end up here without it is a partial install or a stripped-down
+# venv. In those cases the user gets a single obvious error at
+# command invocation, not a pile of per-file errors at migrate time.
+try:
+    import frontmatter as _frontmatter  # noqa: F401
+except ImportError as _fm_err:
+    raise ImportError(
+        "kb-write migrate-legacy-chapters requires the "
+        "'python-frontmatter' package. Install via `pip install "
+        "python-frontmatter` or install kb-importer (which "
+        "depends on it and is typically shipped alongside "
+        "kb-write in the same bundle)."
+    ) from _fm_err
 
 
 log = logging.getLogger(__name__)
@@ -267,8 +292,7 @@ def _build_plan(md: Path, papers_dir: Path) -> ChapterPlan | None:
     parent_key = m["key"]
     chapter_number = int(m["chno"])
 
-    import frontmatter
-    post = frontmatter.load(str(md))
+    post = _frontmatter.load(str(md))
     fm = post.metadata
 
     # Filter: must smell like a legacy chapter thought. A normal
@@ -314,9 +338,8 @@ def _inspect_collision(plan: ChapterPlan) -> str | None:
       - the SAME chapter we'd have written (idempotent re-run) → None
       - something DIFFERENT (real collision; skip + report) → str reason
     """
-    import frontmatter
     try:
-        existing = frontmatter.load(str(plan.dst))
+        existing = _frontmatter.load(str(plan.dst))
     except Exception as e:
         return f"unreadable existing target: {e}"
     fm = existing.metadata
@@ -338,8 +361,7 @@ def _apply_plan(ctx: WriteContext, plan: ChapterPlan) -> None:
     plan.dst.parent.mkdir(parents=True, exist_ok=True)
 
     # Read old body (without frontmatter).
-    import frontmatter
-    post = frontmatter.load(str(plan.src))
+    post = _frontmatter.load(str(plan.src))
     body = post.content.strip("\n")
 
     new_text = _render_new_md(plan, body)

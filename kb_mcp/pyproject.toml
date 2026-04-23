@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "kb-mcp"
-version = "0.27.4"
+version = "0.27.7"
 description = "Projection + MCP server exposing the ee-kb knowledge base to AI clients."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -27,7 +27,7 @@ classifiers = [
     "Topic :: Text Processing :: Indexing",
 ]
 dependencies = [
-    "kb-core>=0.27.4",
+    "kb-core>=0.27.7",
     "mcp>=1.0.0",
     "python-frontmatter>=1.0.0",
     "PyYAML>=6.0",
@@ -44,7 +44,7 @@ dependencies = [
 # Phase 3b: write tools. kb_write is optional — without it, kb-mcp
 # starts in read-only mode (write MCP tools unavailable).
 write = [
-    "kb-write>=0.1.0",
+    "kb-write>=0.27.7",
 ]
 # Gemini embedding provider. Install with `pip install kb-mcp[gemini]`
 # if you want to use GEMINI_API_KEY instead of OPENAI_API_KEY.

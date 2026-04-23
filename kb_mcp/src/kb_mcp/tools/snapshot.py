@@ -247,7 +247,19 @@ def import_snapshot(
                     )
                     continue
                 safe_members.append(m)
-            tar.extractall(staging, members=safe_members)
+            # v0.28.1: pass filter="data" to satisfy Python 3.14+
+            # which deprecates the no-filter default. Our
+            # _is_safe_member pre-filter is the primary defense —
+            # it's stricter than tarfile's "data" filter (rejects
+            # symlinks/hardlinks/devices outright, while "data"
+            # allows relative symlinks within the archive). filter
+            # acts as belt-and-braces: even if someone loosens
+            # _is_safe_member in the future, tarfile still rejects
+            # absolute paths, path-traversal (..), and device
+            # nodes at extract time. On Py 3.13 the call without
+            # filter still worked but emitted a DeprecationWarning
+            # that bled into test runs.
+            tar.extractall(staging, members=safe_members, filter="data")
 
             # Move DB.
             staged_db = staging / _DB_REL
