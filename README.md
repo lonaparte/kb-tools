@@ -473,6 +473,16 @@ AI-zone markers. Other findings are reported but not auto-fixed
 **`kb-write log [N]`** — tail the audit log (last N operations).
 Useful after an agent-driven session to review what got touched.
 
+**`kb-write migrate-legacy-chapters [--dry-run]`** — one-shot
+migration of pre-v24 longform chapter thoughts from
+`thoughts/<date>-<KEY>-ch<NN>-<slug>.md` into the v26 canonical
+location `papers/<KEY>-chNN.md`. No LLM call; body is preserved
+verbatim. Idempotent — re-runs detect already-migrated chapters
+and skip. Collisions (target exists with a different chapter)
+are reported, not overwritten. All moves land in a single
+batch git commit. Use `--dry-run` to preview the plan without
+touching any files.
+
 **`kb-citations status`** — cache summary (how many papers fetched,
 cache age). Quick answer to "does kb-citations have anything for
 paper X?".

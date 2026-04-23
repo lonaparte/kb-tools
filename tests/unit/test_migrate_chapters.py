@@ -17,25 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
-
-def _skip_if_no_frontmatter():
-    """migrate_chapters uses `python-frontmatter` (both to parse
-    legacy thoughts and to inspect existing targets for collision
-    detection). v0.28.1 made that a hard module-level import
-    (instead of three in-function imports with wide except
-    Exception catchers that masked ModuleNotFoundError as "bad
-    frontmatter" per-file). Consequently collection of this
-    test file requires python-frontmatter installed. Skip cleanly
-    when it isn't, matching the convention in
-    test_note_kind_compat._skip_if_no_frontmatter."""
-    try:
-        import frontmatter  # noqa: F401
-    except ImportError:
-        pytest.skip(
-            "python-frontmatter not installed; migrate_chapters "
-            "uses it for YAML frontmatter parsing"
-        )
+from conftest import skip_if_no_frontmatter
 
 
 def _legacy_chapter_md(
@@ -91,7 +73,7 @@ class TestDetection:
     whether a file is a legacy chapter."""
 
     def test_valid_chapter_is_detected(self, tmp_path):
-        _skip_if_no_frontmatter()
+        skip_if_no_frontmatter()
         kb = _kb_root(tmp_path)
         fname, text = _legacy_chapter_md()
         (kb / "thoughts" / fname).write_text(text)
@@ -112,7 +94,7 @@ class TestDetection:
         """A thought whose filename happens to contain `-ch03-` must
         not be treated as a legacy chapter if the frontmatter isn't
         a chapter thought (no source_chapter, no source_type)."""
-        _skip_if_no_frontmatter()
+        skip_if_no_frontmatter()
         kb = _kb_root(tmp_path)
         (kb / "thoughts" / "2026-04-22-BOOKKEY1-ch03-random.md").write_text(
             "---\nkind: thought\ntitle: Random thought\n---\nbody\n"
@@ -122,7 +104,7 @@ class TestDetection:
         assert len(r.plans) == 0
 
     def test_non_chapter_filename_skipped(self, tmp_path):
-        _skip_if_no_frontmatter()
+        skip_if_no_frontmatter()
         kb = _kb_root(tmp_path)
         (kb / "thoughts" / "2026-04-22-random-idea.md").write_text(
             "---\nkind: thought\ntitle: x\n---\nbody\n"
@@ -134,7 +116,7 @@ class TestDetection:
 
 class TestDryRun:
     def test_dry_run_does_not_write(self, tmp_path):
-        _skip_if_no_frontmatter()
+        skip_if_no_frontmatter()
         kb = _kb_root(tmp_path)
         fname, text = _legacy_chapter_md()
         (kb / "thoughts" / fname).write_text(text)
@@ -154,7 +136,7 @@ class TestIdempotency:
     def test_target_with_same_key_chno_is_already_migrated(self, tmp_path):
         """If papers/<KEY>-chNN.md already exists with matching
         zotero_key + chapter_number, the old thought is skipped."""
-        _skip_if_no_frontmatter()
+        skip_if_no_frontmatter()
         kb = _kb_root(tmp_path)
         fname, text = _legacy_chapter_md(key="BOOKKEY2", chno=5)
         (kb / "thoughts" / fname).write_text(text)
@@ -179,7 +161,7 @@ class TestIdempotency:
 
 class TestCollision:
     def test_target_exists_with_different_chapter_is_collision(self, tmp_path):
-        _skip_if_no_frontmatter()
+        skip_if_no_frontmatter()
         kb = _kb_root(tmp_path)
         fname, text = _legacy_chapter_md(key="BOOKKEY3", chno=7)
         (kb / "thoughts" / fname).write_text(text)
@@ -202,7 +184,7 @@ class TestCollision:
 
 class TestApply:
     def test_new_md_has_v26_canonical_shape(self, tmp_path):
-        _skip_if_no_frontmatter()
+        skip_if_no_frontmatter()
         kb = _kb_root(tmp_path)
         fname, text = _legacy_chapter_md(key="BOOKKEY4", chno=11)
         (kb / "thoughts" / fname).write_text(text)
@@ -233,7 +215,7 @@ class TestApply:
         assert not (kb / "thoughts" / fname).exists()
 
     def test_body_preserved_byte_for_byte(self, tmp_path):
-        _skip_if_no_frontmatter()
+        skip_if_no_frontmatter()
         kb = _kb_root(tmp_path)
         body = (
             "*From [[papers/KEY|Title]], chapter 1.*\n\n"
@@ -267,7 +249,7 @@ class TestApply:
 
 class TestReport:
     def test_summary_counts_line(self, tmp_path):
-        _skip_if_no_frontmatter()
+        skip_if_no_frontmatter()
         kb = _kb_root(tmp_path)
         # 2 to-migrate, 1 already-done, 1 collision.
         for key, chno in [("KEYAAAA1", 1), ("KEYAAAA1", 2)]:

@@ -104,6 +104,16 @@ kb-write re-read --dry-run-select                 # cheap preview; no LLM
 kb-write re-read --list-selectors                 # show all strategies
 kb-write re-read --source storage                 # only papers with PDF on disk
 kb-write re-read --seed 42                        # reproducible selection
+
+# One-shot migration of pre-v24 longform chapters from
+#   thoughts/<date>-<KEY>-ch<NN>-<slug>.md   (kind: thought)
+# into the v26 canonical location
+#   papers/<KEY>-chNN.md                     (kind: paper)
+# Preserves body content verbatim (no LLM call), idempotent
+# (re-runs skip already-migrated chapters), reports collisions
+# without overwriting. All moves land in one batch git commit.
+kb-write migrate-legacy-chapters --dry-run         # preview the plan
+kb-write migrate-legacy-chapters                   # actually migrate
 ```
 
 ## dry-run mode

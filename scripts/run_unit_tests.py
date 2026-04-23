@@ -39,6 +39,15 @@ for sub in ("kb_core/src", "kb_write/src", "kb_mcp/src",
     if p.is_dir():
         sys.path.insert(0, str(p))
 
+# v0.27.9: put tests/ on sys.path so unit tests can
+# `from conftest import skip_if_no_X`. Actual conftest.py load
+# happens AFTER the vendored pytest stub is installed below
+# (conftest imports pytest; a real pytest install would satisfy
+# it, but in the stdlib-only CI path we rely on our own stub).
+_TESTS_DIR = REPO / "tests"
+if _TESTS_DIR.is_dir() and str(_TESTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_TESTS_DIR))
+
 
 # ---------------------------------------------------------------------
 # Vendored pytest-compatible stubs. Just enough for tests/unit/.
@@ -166,6 +175,21 @@ class _PytestModule(ModuleType):
 
 _pytest_stub = _PytestModule()
 sys.modules["pytest"] = _pytest_stub
+
+
+# v0.27.9: load tests/conftest.py explicitly now that sys.path
+# includes tests/ AND our `pytest` stub has been registered
+# (conftest.py does `import pytest` at module top for the
+# shared skip-guard helpers). Real pytest auto-loads conftest;
+# this stdlib-only runner has to do it by hand.
+_CONFTEST = _TESTS_DIR / "conftest.py"
+if _CONFTEST.is_file():
+    import importlib.util as _ilu
+    _spec = _ilu.spec_from_file_location("conftest", _CONFTEST)
+    if _spec and _spec.loader:
+        _mod = _ilu.module_from_spec(_spec)
+        sys.modules["conftest"] = _mod
+        _spec.loader.exec_module(_mod)
 
 
 # ---------------------------------------------------------------------

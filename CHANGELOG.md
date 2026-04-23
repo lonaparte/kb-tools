@@ -5,6 +5,123 @@ All notable changes to ee-kb-tools.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is our own (calendar-ish, per-major-iteration).
 
+## [0.27.9] — 2026-04
+
+Second post-0.27.8 release-hygiene batch. Zero runtime-behaviour
+change on happy paths; catches a real install-order bug in
+deploy.sh, tightens internal cross-dep pinning so the bundle can
+only install as one unified version, consolidates the
+skip-guard duplication the previous batch introduced, and
+finishes the marker-constant consolidation started back in
+0.27.0.
+
+### Fixed
+
+- **`scripts/deploy.sh` install order installed kb_importer
+  before kb_write, but kb_importer hard-depends on
+  kb-write.** Pre-0.27.9 order
+  (core → importer → mcp → write → citations) meant that when
+  `pip install -e kb_importer/` ran, its declared
+  `kb-write==0.27.8` dep was unsatisfied locally and pip
+  would either (a) go to an external index looking for a
+  matching version (doesn't exist — the bundle isn't
+  published to PyPI) or (b) fail with an unsatisfied-dep
+  error. Reordered to a correct topological install:
+  `kb_core → kb_write → kb_importer → kb_mcp → kb_citations`.
+  Every package is now installed AFTER its deps are
+  available locally.
+
+- **Internal cross-dep constraints were too loose for a
+  single-bundle release model.** All seven intra-bundle deps
+  (`kb-core>=0.27.7`, `kb-write>=0.27.7`, `kb-mcp>=0.27.7`)
+  would install with the current VERSION 0.27.8 but also
+  accepted arbitrary older bundle versions. That meant a
+  user could end up with
+  `kb-importer 0.27.8 + kb-write 0.27.7` (say, from a stale
+  wheel cache or a partially-failed upgrade) where pip's
+  version resolver is technically happy but the inter-
+  package API may have drifted. The project's versioning
+  rule is explicitly "one unified bundle version; upgrade
+  everything together" — tightened all seven cross-deps to
+  exact-pin `==0.27.9`. Extended
+  `scripts/check_package_consistency.py` to enforce
+  cross-dep == VERSION going forward, so future bumps can't
+  silently leave this drifted.
+
+- **Three `v0.28.x` version comment markers in code after
+  the 0.27.7 / 0.27.8 rollback didn't get renamed.** The
+  0.28.0 minor-bump was retracted and turned into the
+  0.27.7 patch, but three inline comments still referenced
+  `v0.28.0` / `v0.28.1`: `kb_mcp/tools/snapshot.py:250`
+  (tar filter introduction — was 0.27.8), migrate_chapters'
+  fail-fast-import rationale (was 0.27.7 for the problem +
+  0.27.8 for the fix), and `test_migrate_chapters.py`'s
+  skip-guard docstring. Updated to the correct when-
+  introduced version labels.
+
+- **DEPLOYMENT.md's "expected VERSION file contents" hint
+  was still pre-semver.** Two hits (`:145` and `:321`) said
+  `a number like 27` dating from the pre-0.27.1 era when
+  `VERSION=27`. Replaced with `a semver string like 0.27.9`
+  plus an explicit note that all five packages ship as one
+  bundle at the same version.
+
+### Code hygiene
+
+- **Consolidated optional-dep skip-guards into
+  `tests/conftest.py`.** The 0.27.8 batch added guards to
+  prevent stdlib-only CI failures but each of the 7
+  affected test files carried its own 5-line
+  `_skip_if_no_X()` copy. Moved the three canonical
+  helpers (`skip_if_no_mcp`, `skip_if_no_frontmatter`,
+  `skip_if_no_httpx`) to conftest as module-level
+  functions. Each test file now does
+  `from conftest import skip_if_no_X`; the local
+  re-declarations are gone.
+
+  Side-effects:
+    - `tests/conftest.py` adds `tests/` to `sys.path` so the
+      import works from anywhere under `tests/unit/`.
+    - `scripts/run_unit_tests.py` explicitly
+      `exec_module`s conftest.py once at startup (real
+      pytest auto-loads it; this stdlib-only runner didn't
+      before). Runs AFTER the vendored pytest stub is
+      installed so conftest's `import pytest` resolves.
+
+  Result: 7 test files shrink by ~7 lines each; future
+  additions are one-line changes in conftest rather than
+  copy-paste.
+
+- **`migrate_chapters` imports marker constants from their
+  canonical source.** The four `_`-prefixed inline
+  constants (`_FULLTEXT_START`, `_FULLTEXT_END`,
+  `_AI_ZONE_START`, `_AI_ZONE_END`) that 0.27.7 shipped —
+  intentionally — are now replaced with
+  `from kb_core import FULLTEXT_START, FULLTEXT_END` and
+  `from ..zones import AI_ZONE_START, AI_ZONE_END`. Drops
+  the marker-redeclaration count from 8 to 6 in the
+  codebase. The remaining 6 (md_io, indexer,
+  re_summarize, the two canonical sources in kb_core and
+  kb_write.zones) are on the v0.28 file-split track;
+  doing them now would require the structural refactor
+  that's been deferred.
+
+### Added
+
+- **Python 3.13 + 3.14 `pyproject.toml` classifiers.** The
+  classifier blocks listed up to 3.12; 3.13 test runs were
+  already passing in review. Added explicit 3.13 and 3.14
+  entries across all five pyproject.toml files. Metadata
+  only — no runtime dep change.
+
+### Test infrastructure
+
+- Added the cross-dep pinning lint check (noted in Fixed
+  above). The same `scripts/check_package_consistency.py`
+  now verifies both version-string alignment AND that
+  every intra-bundle cross-dep is exactly
+  `==<current VERSION>`.
+
 ## [0.27.8] — 2026-04
 
 Release-hygiene pass after 0.27.7. Three consecutive bumps in

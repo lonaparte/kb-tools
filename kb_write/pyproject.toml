@@ -22,6 +22,8 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Text Processing :: Markup :: Markdown",
     "Topic :: Scientific/Engineering",
 ]
@@ -29,7 +31,7 @@ classifiers = [
 # agents (Claude Code, opencode, etc.) via shell without pulling in
 # the heavy MCP / sqlite-vec / openai stack that kb-mcp carries.
 dependencies = [
-    "kb-core>=0.27.7",
+    "kb-core==0.27.8",
     "python-frontmatter>=1.0.0",
     "PyYAML>=6.0",
 ]

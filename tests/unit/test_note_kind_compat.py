@@ -10,22 +10,13 @@ doesn't silently break the 1000+ existing mds in real KBs."""
 from __future__ import annotations
 
 import pytest
-
-
-def _skip_if_no_frontmatter():
-    try:
-        import frontmatter  # noqa: F401
-    except ImportError:
-        pytest.skip(
-            "python-frontmatter not installed; md_builder / list "
-            "require it"
-        )
+from conftest import skip_if_no_frontmatter
 
 
 class TestMdBuilder:
     def test_new_notes_get_short_kind(self):
         """Fresh imports since v27 write the short form."""
-        _skip_if_no_frontmatter()
+        skip_if_no_frontmatter()
         from kb_importer.md_builder import _build_note_frontmatter
         from kb_importer.zotero_reader import ZoteroItem, ZoteroNote
 
@@ -76,7 +67,7 @@ class TestListFilesKindFilter:
     (kind=note) and legacy (kind=zotero_standalone_note) notes."""
 
     def test_filter_note_matches_new_style(self, tmp_path):
-        _skip_if_no_frontmatter()
+        skip_if_no_frontmatter()
         from kb_mcp.tools.list import list_files_impl
 
         (tmp_path / "topics" / "standalone-note").mkdir(parents=True)
@@ -89,7 +80,7 @@ class TestListFilesKindFilter:
         assert "new.md" in result
 
     def test_filter_note_also_matches_legacy(self, tmp_path):
-        _skip_if_no_frontmatter()
+        skip_if_no_frontmatter()
         from kb_mcp.tools.list import list_files_impl
 
         (tmp_path / "topics" / "standalone-note").mkdir(parents=True)
@@ -108,7 +99,7 @@ class TestListFilesKindFilter:
         )
 
     def test_filter_note_matches_both_together(self, tmp_path):
-        _skip_if_no_frontmatter()
+        skip_if_no_frontmatter()
         from kb_mcp.tools.list import list_files_impl
 
         (tmp_path / "topics" / "standalone-note").mkdir(parents=True)
@@ -128,7 +119,7 @@ class TestListFilesKindFilter:
     def test_filter_other_kind_still_exact(self, tmp_path):
         """Only `note` has the alias. Other kinds (paper, topic,
         thought) still exact-match so nothing unrelated leaks in."""
-        _skip_if_no_frontmatter()
+        skip_if_no_frontmatter()
         from kb_mcp.tools.list import list_files_impl
 
         (tmp_path / "papers").mkdir()

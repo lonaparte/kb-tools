@@ -11,19 +11,13 @@ wouldn't import, so there's nothing to verify in that case."""
 from __future__ import annotations
 
 import pytest
-
-
-def _skip_if_no_httpx():
-    try:
-        import httpx  # noqa: F401
-    except ImportError:
-        pytest.skip("httpx not installed; kb_citations providers unavailable")
+from conftest import skip_if_no_httpx
 
 
 def test_semantic_scholar_provider_has_single_client():
     """The provider instance must keep one httpx.Client across all
     requests it makes during its lifetime."""
-    _skip_if_no_httpx()
+    skip_if_no_httpx()
     from kb_citations.semantic_scholar import SemanticScholarProvider
     p = SemanticScholarProvider(api_key="test-dummy")
     assert hasattr(p, "_client"), (
@@ -38,7 +32,7 @@ def test_semantic_scholar_provider_has_single_client():
 
 
 def test_openalex_provider_has_single_client():
-    _skip_if_no_httpx()
+    skip_if_no_httpx()
     from kb_citations.openalex import OpenAlexProvider
     p = OpenAlexProvider(mailto="test@example.com")
     assert hasattr(p, "_client"), (
@@ -52,7 +46,7 @@ def test_openalex_provider_has_single_client():
 def test_semantic_scholar_context_manager_closes_client():
     """`with provider:` must actually tear down the underlying
     client so the process doesn't leak TCP connections."""
-    _skip_if_no_httpx()
+    skip_if_no_httpx()
     from kb_citations.semantic_scholar import SemanticScholarProvider
     with SemanticScholarProvider(api_key="test-dummy") as p:
         client = p._client
@@ -64,7 +58,7 @@ def test_semantic_scholar_context_manager_closes_client():
 
 
 def test_openalex_context_manager_closes_client():
-    _skip_if_no_httpx()
+    skip_if_no_httpx()
     from kb_citations.openalex import OpenAlexProvider
     with OpenAlexProvider(mailto="test@example.com") as p:
         client = p._client

@@ -16,17 +16,11 @@ stop at EOF. These tests lock that behaviour."""
 from __future__ import annotations
 
 import pytest
-
-
-def _skip_if_no_frontmatter():
-    try:
-        import frontmatter  # noqa: F401
-    except ImportError:
-        pytest.skip("python-frontmatter not installed; md_io requires it")
+from conftest import skip_if_no_frontmatter
 
 
 def _load():
-    _skip_if_no_frontmatter()
+    skip_if_no_frontmatter()
     from kb_importer.md_io import (
         _extract_legacy_fulltext_by_heading as extract,
         AI_ZONE_START as ai_zone,

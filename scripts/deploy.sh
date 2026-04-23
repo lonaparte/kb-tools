@@ -90,9 +90,19 @@ source .venv/bin/activate
 python -m pip install --upgrade pip >/dev/null
 
 # ----- install packages in dependency order -----
+# Order matters: each package's pyproject.toml declares the others it
+# needs as pinned internal deps, so an unmet dep here sends pip off
+# to the external index looking for a matching version — which a)
+# doesn't exist (we don't publish to PyPI), b) might fetch a stale
+# package with the same name. Install topologically:
+#   kb_core      — base, no intra-bundle deps
+#   kb_write     — needs kb_core
+#   kb_importer  — needs kb_core + kb_write
+#   kb_mcp       — needs kb_core + kb_write
+#   kb_citations — needs kb_core + kb_mcp
 echo
 echo "Installing packages (editable)..."
-for pkg in kb_core kb_importer kb_mcp kb_write kb_citations; do
+for pkg in kb_core kb_write kb_importer kb_mcp kb_citations; do
     echo "  -> $pkg"
     pip install -e "$pkg/" >/dev/null
 done

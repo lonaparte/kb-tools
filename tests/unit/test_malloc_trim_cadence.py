@@ -17,20 +17,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
-
-
-def _skip_if_no_mcp():
-    """See test_lazy_reindex_cooldown._skip_if_no_mcp for rationale.
-    `kb_mcp.server` module-level imports FastMCP; collection fails
-    without `mcp` installed. Skip cleanly so stdlib-only CI runs
-    don't turn these tests into failures."""
-    try:
-        import mcp.server.fastmcp  # noqa: F401
-    except ImportError:
-        pytest.skip(
-            "mcp package not installed; kb_mcp.server imports "
-            "FastMCP at module top — server-level tests require it"
-        )
+from conftest import skip_if_no_mcp
 
 
 def _fresh_server_module(monkeypatch, every: int = 16, trim_fn=None):
@@ -52,7 +39,7 @@ def test_trim_fires_on_Nth_call(monkeypatch):
     """Every Nth call to _maybe_trim_arenas should invoke
     malloc_trim. On intermediate calls the counter advances but
     trim is a no-op."""
-    _skip_if_no_mcp()
+    skip_if_no_mcp()
     trim_spy = MagicMock(return_value=1)
     srv = _fresh_server_module(monkeypatch, every=4, trim_fn=trim_spy)
 
@@ -83,7 +70,7 @@ def test_trim_fires_on_Nth_call(monkeypatch):
 
 def test_trim_cadence_scales(monkeypatch):
     """With every=16 (default), 50 calls fire ~3 trims (50 // 16 = 3)."""
-    _skip_if_no_mcp()
+    skip_if_no_mcp()
     trim_spy = MagicMock(return_value=1)
     srv = _fresh_server_module(monkeypatch, every=16, trim_fn=trim_spy)
     for _ in range(50):
@@ -96,7 +83,7 @@ def test_disabled_when_every_is_zero(monkeypatch):
     `_init_malloc_trim` returns None and `_maybe_trim_arenas`
     is a no-op. Useful for debugging / benchmarking without the
     trim side-effect."""
-    _skip_if_no_mcp()
+    skip_if_no_mcp()
     srv = _fresh_server_module(monkeypatch, every=0)
     assert srv._malloc_trim is None
     # No exception, just a no-op.
@@ -110,7 +97,7 @@ def test_non_glibc_platform_is_noop(monkeypatch):
     """On musl / macOS, `ctypes.CDLL('libc.so.6')` either raises
     or the resulting handle has no malloc_trim. In both cases we
     should fall back to None and never trim."""
-    _skip_if_no_mcp()
+    skip_if_no_mcp()
     srv = _fresh_server_module(monkeypatch, every=4, trim_fn=None)
     # Force-simulate "not available".
     srv._malloc_trim = None
@@ -125,7 +112,7 @@ def test_trim_exception_is_swallowed(monkeypatch):
     ctypes interop issue), _maybe_trim_arenas must swallow the
     exception — the whole point is a cleanup optimisation, not
     something that can fail the next tool call."""
-    _skip_if_no_mcp()
+    skip_if_no_mcp()
     import threading
     def boom(_sz):
         raise OSError("simulated malloc_trim failure")
@@ -149,7 +136,7 @@ def test_lazy_reindex_calls_trim_before_cooldown_check(monkeypatch):
     would trim exactly 0 times. So every lazy_reindex hook is
     a trim-counter tick — reindex cooldown and trim cadence are
     independent."""
-    _skip_if_no_mcp()
+    skip_if_no_mcp()
     trim_spy = MagicMock(return_value=1)
     srv = _fresh_server_module(monkeypatch, every=3, trim_fn=trim_spy)
     # Install a LONG cooldown so every lazy_reindex would skip the

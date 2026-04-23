@@ -247,7 +247,7 @@ def import_snapshot(
                     )
                     continue
                 safe_members.append(m)
-            # v0.28.1: pass filter="data" to satisfy Python 3.14+
+            # v0.27.8: pass filter="data" to satisfy Python 3.14+
             # which deprecates the no-filter default. Our
             # _is_safe_member pre-filter is the primary defense —
             # it's stricter than tarfile's "data" filter (rejects

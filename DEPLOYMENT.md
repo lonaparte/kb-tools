@@ -142,7 +142,9 @@ Verify the copy landed:
 ```bash
 test -f "$WORKSPACE_PARENT/.ee-kb-tools/VERSION" || echo "COPY FAILED"
 cat "$WORKSPACE_PARENT/.ee-kb-tools/VERSION"
-# Expected: a number like 27
+# Expected: a semver string like 0.27.9 (all five packages are
+# released together at the same version; cross-deps inside
+# pyproject.toml are pinned to match).
 ```
 
 ### 4. Create the virtualenv inside .ee-kb-tools/
@@ -318,7 +320,9 @@ ee-kb/.kb-mcp/
 
 Before reporting "deployment done" to the user, verify:
 
-- [ ] `$WORKSPACE_PARENT/.ee-kb-tools/VERSION` exists and contains 27
+- [ ] `$WORKSPACE_PARENT/.ee-kb-tools/VERSION` exists and contains a
+      semver string (e.g. `0.27.9`). All five packages are released
+      together at this version.
 - [ ] `$WORKSPACE_PARENT/.ee-kb-tools/.venv/bin/kb-mcp` exists
 - [ ] `python3 $WORKSPACE_PARENT/.ee-kb-tools/scripts/post_install_test.py` prints "passed"
 - [ ] `$WORKSPACE_PARENT/ee-kb/` exists with subdirs

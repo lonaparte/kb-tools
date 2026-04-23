@@ -22,12 +22,14 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Database",
     "Topic :: Scientific/Engineering :: Information Analysis",
     "Topic :: Text Processing :: Indexing",
 ]
 dependencies = [
-    "kb-core>=0.27.7",
+    "kb-core==0.27.8",
     "mcp>=1.0.0",
     "python-frontmatter>=1.0.0",
     "PyYAML>=6.0",
@@ -44,7 +46,7 @@ dependencies = [
 # Phase 3b: write tools. kb_write is optional — without it, kb-mcp
 # starts in read-only mode (write MCP tools unavailable).
 write = [
-    "kb-write>=0.27.7",
+    "kb-write==0.27.8",
 ]
 # Gemini embedding provider. Install with `pip install kb-mcp[gemini]`
 # if you want to use GEMINI_API_KEY instead of OPENAI_API_KEY.

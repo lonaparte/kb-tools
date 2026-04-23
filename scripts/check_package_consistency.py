@@ -100,6 +100,45 @@ def check_versions() -> list[str]:
                 f"{pp}: version = {m.group(1)!r} "
                 f"≠ VERSION = {canonical!r}"
             )
+
+    # v0.27.9: also check INTERNAL cross-dep pins. All five packages
+    # ship as one bundle; cross-deps between them must pin the
+    # current VERSION exactly (`kb-core==0.27.9`, not `>=0.27.9`).
+    # Loose constraints would let pip install a mixed-version
+    # bundle (e.g. kb-importer 0.27.9 + kb-write 0.27.8 from a
+    # stale wheel cache) where the API contract between packages
+    # is formally satisfied but semantically drifted. The project
+    # versioning rule is "one unified bundle version; update
+    # everything together", so we enforce it at the pyproject
+    # level too.
+    bundle_names = {
+        "kb-core", "kb-write", "kb-mcp", "kb-importer", "kb-citations",
+    }
+    # Match a dep line inside a dependencies = [ ... ] list. We keep
+    # this permissive (don't rely on a TOML parser) to match the
+    # style of the rest of this script.
+    dep_pattern = re.compile(
+        r'"(?P<name>kb-(?:core|write|mcp|importer|citations))'
+        r'(?P<op>[=<>!~]+)(?P<ver>[0-9.]+)"'
+    )
+    for pp in pyprojects:
+        p = REPO / pp
+        if not p.exists():
+            continue
+        text = p.read_text()
+        for m in dep_pattern.finditer(text):
+            name = m.group("name")
+            op = m.group("op")
+            ver = m.group("ver")
+            if name not in bundle_names:
+                continue
+            if op != "==" or ver != canonical:
+                errors.append(
+                    f"{pp}: internal cross-dep "
+                    f'"{name}{op}{ver}" — must pin '
+                    f'"{name}=={canonical}" '
+                    f"(one unified bundle version)"
+                )
     return errors
 
 

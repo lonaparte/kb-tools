@@ -42,25 +42,30 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from kb_core import FULLTEXT_START, FULLTEXT_END
+
 from ..atomic import atomic_write
 from ..audit import record as _audit_record
 from ..config import WriteContext
+from ..zones import AI_ZONE_START, AI_ZONE_END
 
 
-# Hard dependency. v0.28.0 shipped this module with three in-function
-# `import frontmatter` calls — when python-frontmatter was missing,
-# the ModuleNotFoundError got caught by the outer `except Exception`
-# in _build_plan and surfaced as N identical "bad frontmatter"
-# per-file errors. That's misleading: the root cause is missing
-# deps, not user data corruption. Fail-fast at module import with a
-# clear actionable message instead.
+# Hard dependency. v0.27.7 shipped this module with three
+# in-function `import frontmatter` calls — when
+# python-frontmatter was missing, the ModuleNotFoundError got
+# caught by the outer `except Exception` in _build_plan and
+# surfaced as N identical "bad frontmatter" per-file errors.
+# That's misleading: the root cause is missing deps, not user
+# data corruption. v0.27.8 moved the import to module top and
+# fails fast with a clear actionable message instead.
 #
 # python-frontmatter is also declared as a runtime dep in
 # kb_importer/pyproject.toml (hence available in the standard
-# bundle), and kb_write soft-depends on kb_importer; the only way
-# to end up here without it is a partial install or a stripped-down
-# venv. In those cases the user gets a single obvious error at
-# command invocation, not a pile of per-file errors at migrate time.
+# bundle), and kb_write soft-depends on kb_importer; the only
+# way to end up here without it is a partial install or a
+# stripped-down venv. In those cases the user gets a single
+# obvious error at command invocation, not a pile of per-file
+# errors at migrate time.
 try:
     import frontmatter as _frontmatter  # noqa: F401
 except ImportError as _fm_err:
@@ -99,15 +104,12 @@ _TITLE_SPLIT_RE = re.compile(
 )
 
 
-# v26 zone markers — inlined so the migrator doesn't hard-depend
-# on kb_importer's md_io constants. If these ever drift between
-# the two, migrate-legacy-chapters becomes load-bearing for
-# keeping them in sync; a single source in kb_core would be
-# better long-term but isn't yet extracted.
-_AI_ZONE_START = "<!-- kb-ai-zone-start -->"
-_AI_ZONE_END = "<!-- kb-ai-zone-end -->"
-_FULLTEXT_START = "<!-- kb-fulltext-start -->"
-_FULLTEXT_END = "<!-- kb-fulltext-end -->"
+# v0.27.9: zone marker constants moved out — FULLTEXT_START/END
+# from kb_core (canonical source since 0.27.0) and
+# AI_ZONE_START/END from kb_write.zones (canonical for the
+# write-side). Previously inlined as `_`-prefixed strings here;
+# removing them reduces the overall redeclaration count and
+# prevents drift between kb_core/kb_importer.md_io/this module.
 
 
 @dataclass
@@ -421,16 +423,16 @@ def _render_new_md(plan: ChapterPlan, body: str) -> str:
         "",
         f"# {new_title}",
         "",
-        _FULLTEXT_START,
+        FULLTEXT_START,
         "",
         body,
         "",
-        _FULLTEXT_END,
+        FULLTEXT_END,
         "",
         "---",
         "",
-        _AI_ZONE_START,
-        _AI_ZONE_END,
+        AI_ZONE_START,
+        AI_ZONE_END,
         "",
     ]
 

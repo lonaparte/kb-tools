@@ -18,26 +18,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
-
-
-def _skip_if_no_mcp():
-    """`kb_mcp.server` hard-imports `mcp.server.fastmcp.FastMCP` at
-    module scope, so this whole test file is un-collectible in an
-    environment without the `mcp` package installed. Skip cleanly
-    in that case — `scripts/run_unit_tests.py` is stdlib-only by
-    design (per 0.27.0 CHANGELOG), so CI-style runs without the
-    full bundle must not turn these tests into failures.
-
-    Splitting kb_mcp.server into a mcp-protocol layer + a
-    mcp-free business-logic layer would let these tests run
-    without the guard; that refactor is v0.28 scope."""
-    try:
-        import mcp.server.fastmcp  # noqa: F401
-    except ImportError:
-        pytest.skip(
-            "mcp package not installed; kb_mcp.server imports "
-            "FastMCP at module top — server-level tests require it"
-        )
+from conftest import skip_if_no_mcp
 
 
 def _fresh_server_module(monkeypatch, cooldown: float = 1.0):
@@ -54,7 +35,7 @@ def _fresh_server_module(monkeypatch, cooldown: float = 1.0):
 
 
 def test_first_call_runs_indexer(monkeypatch):
-    _skip_if_no_mcp()
+    skip_if_no_mcp()
     srv = _fresh_server_module(monkeypatch, cooldown=1.0)
 
     # Fake config + store so the function doesn't early-return on
@@ -76,7 +57,7 @@ def test_first_call_runs_indexer(monkeypatch):
 
 
 def test_second_call_within_cooldown_skips(monkeypatch):
-    _skip_if_no_mcp()
+    skip_if_no_mcp()
     srv = _fresh_server_module(monkeypatch, cooldown=5.0)
 
     srv._cfg = MagicMock(kb_root="/tmp", embedding_batch_size=10)
@@ -100,7 +81,7 @@ def test_second_call_within_cooldown_skips(monkeypatch):
 
 
 def test_call_after_cooldown_runs_again(monkeypatch):
-    _skip_if_no_mcp()
+    skip_if_no_mcp()
     srv = _fresh_server_module(monkeypatch, cooldown=0.05)
 
     srv._cfg = MagicMock(kb_root="/tmp", embedding_batch_size=10)
@@ -121,7 +102,7 @@ def test_cooldown_zero_disables(monkeypatch):
     """Cooldown=0 should always run the indexer, matching pre-v0.27.5
     behaviour (no skipping). Useful for tests and for users who run
     external edits mid-agent-session."""
-    _skip_if_no_mcp()
+    skip_if_no_mcp()
     srv = _fresh_server_module(monkeypatch, cooldown=0.0)
 
     srv._cfg = MagicMock(kb_root="/tmp", embedding_batch_size=10)
@@ -143,7 +124,7 @@ def test_failed_reindex_does_not_stamp(monkeypatch):
     """If Indexer raises, we log + continue but do NOT stamp
     _last_lazy_reindex_at — otherwise a one-off failure would
     mask subsequent errors for the whole cooldown window."""
-    _skip_if_no_mcp()
+    skip_if_no_mcp()
     srv = _fresh_server_module(monkeypatch, cooldown=5.0)
 
     srv._cfg = MagicMock(kb_root="/tmp", embedding_batch_size=10)
@@ -171,7 +152,7 @@ def test_disabled_server_skips_without_stamping(monkeypatch):
     """If the server isn't initialised (_cfg / _store is None),
     lazy_reindex is a no-op and leaves the timestamp alone so the
     first real call after init runs normally."""
-    _skip_if_no_mcp()
+    skip_if_no_mcp()
     srv = _fresh_server_module(monkeypatch, cooldown=1.0)
 
     srv._cfg = None

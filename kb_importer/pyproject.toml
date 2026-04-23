@@ -22,11 +22,13 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Text Processing :: Markup :: Markdown",
     "Topic :: Scientific/Engineering",
 ]
 dependencies = [
-    "kb-core>=0.27.7",
+    "kb-core==0.27.8",
     "pyzotero>=1.5.20",
     "python-frontmatter>=1.0.0",
     "markdownify>=0.11.6",
@@ -38,7 +40,7 @@ dependencies = [
     # installed. The version is pinned loosely to the same v26
     # bundle release; workspace-consistency lint enforces the
     # actual VERSION match.
-    "kb-write>=0.27.7",
+    "kb-write==0.27.8",
 ]
 
 [project.scripts]
