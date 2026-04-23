@@ -15,8 +15,10 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 import tarfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -142,6 +144,92 @@ def _emit_index_op_event(
         pass
 
 
+# v0.27.5: rate-limit lazy_reindex to avoid per-tool-call memory
+# churn during agent bursts. On a 1154-paper library each
+# lazy_reindex does ~1344 stat() calls + a burst of per-paper SQL
+# reads. tracemalloc on a 20-call run shows Python-object growth is
+# tiny (<10 KB total); the ~156 KB/call RSS growth measured in the
+# field is almost entirely SQLite's C-level page + statement cache
+# plus pymalloc arena retention — freed memory the allocator
+# doesn't return to the OS. Skipping the reindex when we ran one
+# < 1s ago caps the churn without meaningfully affecting
+# freshness: back-to-back tool calls in an agent burst don't
+# change md state between calls, and kb-write's own
+# `trigger_reindex` is an out-of-process subprocess that updates
+# the DB independently.
+#
+# Environment override (testing / very-rapid-edit workflows):
+#   KB_MCP_LAZY_REINDEX_COOLDOWN_S=<float>   e.g. 0 = always run
+try:
+    _LAZY_REINDEX_COOLDOWN_S = float(
+        os.environ.get("KB_MCP_LAZY_REINDEX_COOLDOWN_S", "1.0")
+    )
+except ValueError:
+    _LAZY_REINDEX_COOLDOWN_S = 1.0
+_last_lazy_reindex_at: float | None = None
+
+
+# v0.27.5 second lever: periodic glibc malloc_trim to release
+# freed-but-retained arenas back to the OS. Field profile showed
+# +24 MB RSS / 90 tool calls with the TTL cooldown alone (Python-
+# object growth ~10 KB; the rest is sqlite page cache + pymalloc
+# arenas). malloc_trim(0) instructs glibc to shrink the heap past
+# its high-water mark; a synthetic 80 MB → 13 MB benchmark showed
+# ~8 MB of retained memory reclaimed per call.
+#
+# We can't call it on every tool (~1 ms syscall each, plus the
+# page-fault thrash when the arenas rebuild); a burst-aware cadence
+# works well — trim every Nth lazy_reindex, covering the common
+# "agent fires 10-30 tools then idles" pattern without affecting
+# per-call latency. Non-glibc platforms (musl, macOS) lack this
+# symbol — we detect once and become a no-op there.
+#
+# Tunable via KB_MCP_MALLOC_TRIM_EVERY=<int>  (0 = disable, default 16)
+try:
+    _MALLOC_TRIM_EVERY = int(os.environ.get("KB_MCP_MALLOC_TRIM_EVERY", "16"))
+except ValueError:
+    _MALLOC_TRIM_EVERY = 16
+_tool_call_counter = 0
+
+def _init_malloc_trim():
+    """Resolve glibc's malloc_trim once. Returns a callable that
+    reclaims arenas, or None when the platform's libc doesn't
+    export the symbol."""
+    if _MALLOC_TRIM_EVERY <= 0:
+        return None
+    try:
+        import ctypes
+        libc = ctypes.CDLL("libc.so.6", use_errno=False)
+        if not hasattr(libc, "malloc_trim"):
+            return None
+        libc.malloc_trim.argtypes = [ctypes.c_size_t]
+        libc.malloc_trim.restype = ctypes.c_int
+        return libc.malloc_trim
+    except Exception:
+        # Non-glibc (musl, macOS) — silently disable.
+        return None
+
+_malloc_trim = _init_malloc_trim()
+
+
+def _maybe_trim_arenas() -> None:
+    """Called from _lazy_reindex on every DB-backed tool. Every Nth
+    call fires malloc_trim + gc.collect to push freed memory back
+    to the OS. Cheap no-op on non-glibc platforms."""
+    global _tool_call_counter
+    if _malloc_trim is None:
+        return
+    _tool_call_counter += 1
+    if _tool_call_counter >= _MALLOC_TRIM_EVERY:
+        _tool_call_counter = 0
+        import gc
+        gc.collect()
+        try:
+            _malloc_trim(0)
+        except Exception:
+            log.debug("malloc_trim raised; ignoring", exc_info=True)
+
+
 def _lazy_reindex() -> None:
     """Quick scan to ensure DB reflects recent md edits.
 
@@ -157,17 +245,36 @@ def _lazy_reindex() -> None:
     We don't call this on the 4 Phase 1 tools (find/list/read/grep)
     because they work directly off the filesystem and don't care
     about the DB.
+
+    v0.27.5: TTL cooldown — if we ran a reindex < COOLDOWN_S ago,
+    skip. Big memory-churn reduction without freshness loss in the
+    common agent-burst case. Override via
+    KB_MCP_LAZY_REINDEX_COOLDOWN_S env var (0 = always run).
     """
+    global _last_lazy_reindex_at
+    # Periodic arena trim runs regardless of the cooldown skip —
+    # it's the only place that sees every DB-backed tool call, so
+    # it's the natural hook for "free retained memory every N
+    # calls". Fires before the cooldown check so even skipped
+    # reindexes count toward the trim cadence.
+    _maybe_trim_arenas()
     if _cfg is None or _store is None:
         return
+    if _LAZY_REINDEX_COOLDOWN_S > 0 and _last_lazy_reindex_at is not None:
+        if time.monotonic() - _last_lazy_reindex_at < _LAZY_REINDEX_COOLDOWN_S:
+            return
     try:
         Indexer(
             _cfg.kb_root, _store,
             embedding_provider=_embedder,
             embedding_batch_size=_cfg.embedding_batch_size,
         ).reindex_if_stale()
+        _last_lazy_reindex_at = time.monotonic()
     except Exception:
         # Don't let indexing errors block reads — log and proceed.
+        # Do NOT stamp _last_lazy_reindex_at on failure — a failed
+        # scan should retry on the next call, not honour the
+        # cooldown and mask further errors.
         log.exception("lazy reindex failed; serving stale DB")
 
 
