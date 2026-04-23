@@ -198,14 +198,34 @@ def list_papers_with_doi(kb_root: Path) -> list[dict]:
 
 
 def count_papers(kb_root: Path) -> int:
-    """Read-only: total paper row count. Used by subset-mode stats
-    bookkeeping."""
+    """Read-only: total count of whole-work paper rows (i.e.
+    rows where `paper_key == zotero_key`). Used by the refresh-
+    counts stats line to report "N papers total, M with DOI".
+
+    v0.27.10: this used to be `SELECT COUNT(*) FROM papers`, which
+    in a library with book-chapter splits (`BOOKKEY.md` +
+    `BOOKKEY-ch01.md` + `BOOKKEY-ch02.md`) would count every
+    chapter row as a separate "paper" even though the
+    refresh-counts loop only processes the whole-work row
+    (`list_papers_with_doi` already filters to
+    `paper_key == zotero_key`). The result was a report like
+    `total=1336, with-DOI=100, skipped_no_doi=1236` where 182
+    of the "skipped" weren't candidates at all — they were
+    chapters of already-counted books.
+
+    Matching the filter that `list_papers_with_doi` uses gives
+    report values you can actually reason about: `total` = count
+    of Zotero items (one per `zotero_key`), `with-DOI` = subset
+    with non-empty DOI, `skipped_no_doi` = whole-work items
+    without a DOI.
+    """
     from .store import get_connection
 
     conn = get_connection(kb_root)
     try:
         row = conn.execute(
-            "SELECT COUNT(*) AS n FROM papers"
+            "SELECT COUNT(*) AS n FROM papers "
+            "WHERE paper_key = zotero_key"
         ).fetchone()
     finally:
         try:

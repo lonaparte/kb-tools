@@ -74,11 +74,31 @@ def build_edges(
           "meta": {"provider": "semantic_scholar",
                    "ref_doi": "...", "ref_title": "..."}
         }
+
+    v0.27.10: `report.edges_emitted` now counts UNIQUE edges.
+    Pre-0.27.10 this was a per-append counter, but the provider's
+    "references" and "citations" lists often produce the same
+    (src, dst, origin) tuple via different paths (A->X listed in
+    A's references AND in X's citations) — the downstream
+    `INSERT OR IGNORE` silently collapses those. The old counter
+    was larger than the number of rows that actually landed in
+    the `links` table, making "wrote N edges" reports misleading.
     """
     cache = CitationCache(kb_root)
     resolver = resolver or LocalResolver.from_kb(kb_root)
     report = LinkReport()
-    edges: list[dict] = []
+    # Keyed by (src_type, src_key, dst_type, dst_key, origin) so
+    # the dedupe matches the downstream UNIQUE constraint on
+    # `links`. First-seen wins on meta (preserves the "via"
+    # provenance of whichever path discovered the edge first).
+    _seen: dict[tuple, dict] = {}
+
+    def _add_edge(edge: dict) -> None:
+        key = (edge["src_type"], edge["src_key"],
+               edge["dst_type"], edge["dst_key"], edge["origin"])
+        if key in _seen:
+            return
+        _seen[key] = edge
 
     for src_key in cache.all_keys():
         report.cached_papers_scanned += 1
@@ -104,7 +124,7 @@ def build_edges(
             if dst_key == src_key:
                 # Self-citation? Skip — shouldn't happen but defensive.
                 continue
-            edges.append({
+            _add_edge({
                 "src_type": "paper",
                 "src_key":  src_key,
                 "dst_type": "paper",
@@ -117,7 +137,6 @@ def build_edges(
                     "via": "references",  # A -> X via A's outbound list
                 },
             })
-            report.edges_emitted += 1
 
         # ---- citations: Y cites A. Direction is Y -> A (reversed). ----
         # Previously these were fetched (at API cost) but never
@@ -126,7 +145,8 @@ def build_edges(
         # Y -> A inbound edge even when Y's own `references` fetch
         # missed it (or wasn't fetched at all). Duplicate (Y, A)
         # edges across references and citations lists are collapsed
-        # by the `INSERT OR IGNORE` + UNIQUE constraint downstream.
+        # by the _seen dict above (so `edges_emitted` matches the
+        # unique rows that will land in the DB).
         for cite in data.get("citations") or []:
             src_y = resolver.resolve(
                 doi=cite.get("doi"), title=cite.get("title"),
@@ -145,7 +165,7 @@ def build_edges(
                 continue
             if src_y == src_key:
                 continue  # self
-            edges.append({
+            _add_edge({
                 "src_type": "paper",
                 "src_key":  src_y,     # the citer
                 "dst_type": "paper",
@@ -159,7 +179,9 @@ def build_edges(
                     "via": "citations",  # Y -> A via A's inbound list
                 },
             })
-            report.edges_emitted += 1
+
+    edges = list(_seen.values())
+    report.edges_emitted = len(edges)
     return edges, report
 
 

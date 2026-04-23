@@ -189,6 +189,27 @@ def atomic_write(
         raise
 
 
+# v0.27.10: in-process re-entry tracker.
+#
+# Pre-0.27.10 `write_lock` had a re-entrancy bug: when the same
+# process tried to acquire the lock while already holding it, the
+# O_EXCL create would fail (file exists), the code would read the
+# PID from the existing file, see it matches the current PID, and
+# fall through to the "Stale lock — take it over" branch. That
+# unlinked the lock file and created a fresh one. When the inner
+# scope exited it would unlink the lock — while the outer scope
+# was still in its critical section — and a sibling process could
+# then walk in.
+#
+# Fix: track lock holders in a per-process dict keyed by absolute
+# lock-file path. On entry, if this process already owns the path,
+# bump the depth and yield without touching the file. On exit,
+# decrement; only unlink at depth 0. The on-disk PID file is
+# still the cross-process signal; it just doesn't need
+# re-acquiring from within the same process.
+_held_locks: dict[str, int] = {}
+
+
 @contextmanager
 def write_lock(kb_root: Path, timeout: float = 10.0) -> Iterator[Path]:
     """Acquire an advisory write lock for the whole KB.
@@ -200,6 +221,10 @@ def write_lock(kb_root: Path, timeout: float = 10.0) -> Iterator[Path]:
     Stale locks (from crashed processes) are detected by checking
     whether the PID is running, and taken over.
 
+    Re-entrant within a single process: nested `with write_lock(...)`
+    calls share the on-disk lock file (inner acquisitions bump an
+    in-memory depth counter; only the outermost exit unlinks).
+
     Not a kernel-level lock (would need `fcntl` on POSIX, `msvcrt` on
     Windows); this is good enough for the single-user case and
     correctly raises when lock is contended.
@@ -207,7 +232,20 @@ def write_lock(kb_root: Path, timeout: float = 10.0) -> Iterator[Path]:
     lock_dir = kb_root / ".kb-mcp"
     lock_dir.mkdir(parents=True, exist_ok=True)
     lock_path = lock_dir / "write.lock"
+    lock_key = str(lock_path.resolve())
     my_pid = os.getpid()
+
+    # Re-entrancy check: if this process already holds this lock
+    # path, bump the depth and yield without touching the file.
+    # Inner exits will decrement; the outermost exit unlinks.
+    if _held_locks.get(lock_key, 0) > 0:
+        _held_locks[lock_key] += 1
+        try:
+            yield lock_path
+        finally:
+            _held_locks[lock_key] -= 1
+            # Never unlink from a nested exit — outer still holds.
+        return
 
     deadline = time.monotonic() + timeout
     while True:
@@ -232,7 +270,11 @@ def write_lock(kb_root: Path, timeout: float = 10.0) -> Iterator[Path]:
                         )
                     time.sleep(0.1)
                     continue
-                # Stale lock — take it over.
+                # Stale lock. Either (a) PID dead or (b) PID same as
+                # ours but _held_locks says we're NOT already
+                # holding it — means the previous process (possibly
+                # an ancestor with PID reuse, or an earlier crash
+                # that left state) abandoned it. Take it over.
                 lock_path.unlink(missing_ok=True)
                 continue
             except (ValueError, FileNotFoundError):
@@ -240,17 +282,22 @@ def write_lock(kb_root: Path, timeout: float = 10.0) -> Iterator[Path]:
                 lock_path.unlink(missing_ok=True)
                 continue
 
+    _held_locks[lock_key] = 1
     try:
         yield lock_path
     finally:
-        # Only remove if it's still ours (defensive: something else
-        # might have taken over if we hung for a long time).
-        try:
-            pid_in_file = int(lock_path.read_text().strip())
-            if pid_in_file == my_pid:
-                lock_path.unlink(missing_ok=True)
-        except Exception:
-            pass
+        _held_locks[lock_key] -= 1
+        if _held_locks[lock_key] <= 0:
+            _held_locks.pop(lock_key, None)
+            # Only remove the on-disk file if it's still ours
+            # (defensive: something else might have taken over if
+            # we hung for a long time).
+            try:
+                pid_in_file = int(lock_path.read_text().strip())
+                if pid_in_file == my_pid:
+                    lock_path.unlink(missing_ok=True)
+            except Exception:
+                pass
 
 
 def _pid_alive(pid: int) -> bool:

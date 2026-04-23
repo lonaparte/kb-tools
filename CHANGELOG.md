@@ -5,6 +5,159 @@ All notable changes to ee-kb-tools.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is our own (calendar-ish, per-major-iteration).
 
+## [0.27.10] — 2026-04
+
+Five bug fixes from a fresh external review. One data-
+consistency bug (#2) with silent downstream RAG degradation;
+one latent re-entrancy bug (#1) that no current caller
+triggers but any refactor could; one index-drift bug (#3);
+two observability/reporting bugs (#4, #5). No behaviour
+change on happy paths; all five are defensive improvements.
+
+### Fixed
+
+- **#2 Embedding pass mis-flagged partially-embedded papers
+  as `embedded = 1`.** When a paper's chunks spanned multiple
+  embedding batches and some non-first batch failed, the
+  pre-0.27.10 code still added the paper to `success_papers`
+  via the chunks from earlier successful batches. The
+  post-loop `UPDATE papers SET embedded = 1 WHERE paper_key IN
+  success_papers` then marked the paper fully embedded even
+  though only some chunks had landed. The paper's md_mtime
+  matched the row so future reindexes wouldn't re-queue it —
+  RAG coverage silently degraded on the next API-quota hiccup
+  and never self-healed.
+
+  Fix: `_run_embedding_pass` now tracks per-paper
+  `expected_per_paper` (chunks scheduled) and
+  `inserted_per_paper` (chunks actually landed). After all
+  batches it splits pending into `fully_embedded` (inserted
+  == expected → `UPDATE embedded = 1`) and `partially_embedded`
+  (inserted < expected → DELETE their partial chunk_meta +
+  chunks_vec rows, leave `embedded = 0` so the next reindex
+  retries cleanly). `report.embed_failed` counts by paper, not
+  by batch, so the number reflects actual retry candidates.
+
+  Locked by `tests/unit/test_embedding_partial_batch.py` —
+  three cases: partial batch → embedded=0 and scrubbed,
+  all-in-one-batch happy path, multi-batch all-succeed happy
+  path.
+
+- **#1 `write_lock()` deleted the on-disk lock on nested
+  in-process acquisition.** When the same process called
+  `write_lock(kb)` from within an already-held lock, the
+  O_EXCL create would fail (file exists), the code read the
+  PID from the lock file, saw it matched the current
+  process, and fell through to the "Stale lock — take it
+  over" branch. That path unlinked the lock file and
+  recreated it. When the inner scope exited it unlinked the
+  lock a second time — while the outer scope was still in
+  its critical section — letting a sibling process walk in.
+
+  No active caller in the current codebase re-enters
+  `write_lock` (the one case that nearly does, `re_read →
+  re_summarize`, was deliberately designed so `re_read`
+  doesn't hold a lock). But the bug was one refactor away
+  from firing, and the cost of fixing it now is small.
+
+  Fix: added a module-level `_held_locks: dict[str, int]`
+  tracking per-lock-path re-entry depth. On entry, if we
+  already hold this path, bump the depth and yield without
+  touching the file. On exit, decrement; only the outermost
+  exit unlinks. The on-disk lock file remains the
+  cross-process signal; the depth counter handles within-
+  process nesting.
+
+  Locked by 5 cases in `tests/unit/test_write_lock_reentry.py`:
+  depth-2 nesting doesn't let inner exit kill outer, depth-3
+  nesting works, sequential acquires still work, separate
+  kb_roots don't share state, inner exception still decrements
+  depth via finally.
+
+- **#3 Indexer left stale DB rows when frontmatter became
+  invalid.** If a previously-indexed paper had its `kind`
+  field changed (e.g. user edited YAML, or a tool rewrote it)
+  or its frontmatter was corrupted so `frontmatter.load()`
+  raised, the indexer's kind-check branch just logged and
+  returned (and the outer try/except just recorded the
+  error). The DB row — plus paper_fts + paper_chunk_meta +
+  paper_chunks_vec + outbound links — stayed. Search,
+  backlinks, and graph queries kept returning a phantom node
+  until the md file itself was deleted.
+
+  Fix: new `_delete_stale_node_row(table, key)` helper that
+  removes the main row + side tables + FTS + chunk data,
+  reclassifies inbound links as 'dangling'. Wired into both
+  (a) the kind-mismatch branch of `_index_paper` /
+  `_index_note` and (b) the outer `except Exception` of all
+  four `_index_*` methods. When a file fails to be a valid
+  node, any row it had before is scrubbed.
+
+  Locked by 5 cases in `tests/unit/test_indexer_stale_row_cleanup.py`:
+  kind-mismatch removes row + side tables, parse-failure
+  triggers cleanup from outer except, fresh file with
+  bad kind is a clean no-op, helper is idempotent on
+  missing keys, paper side tables are all scrubbed.
+
+- **#4 `refresh-counts` `skipped_no_doi` over-counted by the
+  chapter-row count.** `citation_ops.count_papers()` was a
+  naked `SELECT COUNT(*) FROM papers`, but
+  `list_papers_with_doi()` filtered to whole-work rows only
+  (`paper_key = zotero_key`). In a library with book-chapter
+  splits (one `BOOKKEY.md` row plus N `BOOKKEY-chNN.md`
+  rows) `total_papers - len(papers_with_doi)` over-counted
+  the "skipped" bucket by the chapter count. The report line
+  `"N papers total, M with DOI, K skipped_no_doi"` misled
+  users trying to decide whether `refresh-counts` had more
+  work to do.
+
+  Fix: `count_papers()` now filters the same way
+  (`WHERE paper_key = zotero_key`). Not data corruption —
+  the links table itself was always correct. Only the
+  progress line and the final report struct had the
+  mis-count.
+
+  Locked by 3 cases in `tests/unit/test_count_papers_whole_work.py`.
+
+- **#5 `linker.build_edges()` `report.edges_emitted`
+  over-counted vs the DB's actual `links` row count.** The
+  counter incremented per-append, but the `references` and
+  `citations` lists from a provider frequently produce the
+  same (src, dst, origin) tuple via different paths
+  (A→X listed in A's references AND also in X's citations).
+  Downstream `INSERT OR IGNORE` silently collapsed the
+  duplicates, so "wrote N edges" was misleadingly high.
+
+  Fix: dedupe at build time via a `_seen` dict keyed by
+  `(src_type, src_key, dst_type, dst_key, origin)` — the
+  same tuple as the `links` UNIQUE constraint. First-seen
+  wins (preserves provenance). `report.edges_emitted =
+  len(edges)` at the end matches what will actually land.
+  Not data corruption — the `links` table always had
+  exactly the right set of unique edges after
+  `INSERT OR IGNORE`.
+
+  Locked by 4 cases in `tests/unit/test_linker_edges_dedup.py`:
+  same edge seen via both paths counted once, disjoint edges
+  all counted, empty cache → 0, unresolved refs count as
+  dangling (not emitted).
+
+### Tests
+
+Full venv: 290 → 310 passed (+20 new regression cases).
+Stdlib-only CI sim: 255+35 → 260+50 (the 15 new net skips
+cover the new tests' optional-dep guards).
+
+### Deferred (unchanged from v0.27.9)
+
+- Big-file split (server.py 2132, import_cmd.py 1505,
+  indexer.py 1262, cli.py 1082) — v0.28 scope.
+- re_read / re_summarize classifier structural dedup —
+  v0.28 scope (two callers still below the abstraction-cost
+  threshold).
+- 4 remaining marker-constant redeclarations in md_io,
+  re_summarize, indexer — v0.28 file-split scope.
+
 ## [0.27.9] — 2026-04
 
 Second post-0.27.8 release-hygiene batch. Zero runtime-behaviour

@@ -225,6 +225,18 @@ class Indexer:
             except Exception as e:
                 log.exception("failed indexing paper %s", md.name)
                 report.errors.append((str(md.relative_to(self.kb_root)), str(e)))
+                # v0.27.10: if the failure happened on a paper that
+                # we had a stale row for, clean the row so search /
+                # backlinks don't keep returning a phantom node
+                # every run. (Idempotent no-op when there was no
+                # row.)
+                try:
+                    self._delete_stale_node_row("papers", md.stem)
+                except Exception:
+                    log.exception(
+                        "stale-row cleanup failed for paper %s",
+                        md.name,
+                    )
 
     def _index_paper(self, md: Path, report: IndexReport) -> None:
         # v26: paper_key is the md filename stem. For most papers it
@@ -285,6 +297,13 @@ class Indexer:
                 "paper will not be indexed",
                 md_rel, fm.get("kind"),
             )
+            # v0.27.10: if we had a stale row, clean it so the
+            # phantom paper stops showing up in search / backlinks
+            # / graph. Pre-0.27.10 the row stayed until the md was
+            # deleted from disk, even though the indexer had
+            # already decided it was no longer a paper.
+            if row is not None:
+                self._delete_stale_node_row("papers", paper_key)
             return
 
         # v26: frontmatter may also override zotero_key (for synthetic
@@ -464,6 +483,13 @@ class Indexer:
             except Exception as e:
                 log.exception("failed indexing note %s", md.name)
                 report.errors.append((str(md.relative_to(self.kb_root)), str(e)))
+                try:
+                    self._delete_stale_node_row("notes", md.stem)
+                except Exception:
+                    log.exception(
+                        "stale-row cleanup failed for note %s",
+                        md.name,
+                    )
 
     def _index_note(self, md: Path, report: IndexReport) -> None:
         key = md.stem
@@ -486,6 +512,10 @@ class Indexer:
         # migration required.
         kind = post.metadata.get("kind")
         if kind not in ("note", "zotero_standalone_note"):
+            # v0.27.10: kind changed (or was corrupted) — clean
+            # any stale row so it stops being returned by queries.
+            if row is not None:
+                self._delete_stale_node_row("notes", key)
             return
 
         self.store.execute("""
@@ -533,6 +563,18 @@ class Indexer:
             except Exception as e:
                 log.exception("failed indexing topic %s", md.name)
                 report.errors.append((str(md.relative_to(self.kb_root)), str(e)))
+                # Topic slug derivation uses a relative path; best
+                # effort here — if we can't compute it, skip cleanup.
+                try:
+                    slug = md.relative_to(
+                        self.kb_root / TOPICS_AGENT_DIR
+                    ).with_suffix("").as_posix()
+                    self._delete_stale_node_row("topics", slug)
+                except Exception:
+                    log.exception(
+                        "stale-row cleanup failed for topic %s",
+                        md.name,
+                    )
 
     def _index_topic(self, md: Path, report: IndexReport) -> None:
         md_rel = md.relative_to(self.kb_root).as_posix()
@@ -585,6 +627,13 @@ class Indexer:
             except Exception as e:
                 log.exception("failed indexing thought %s", md.name)
                 report.errors.append((str(md.relative_to(self.kb_root)), str(e)))
+                try:
+                    self._delete_stale_node_row("thoughts", md.stem)
+                except Exception:
+                    log.exception(
+                        "stale-row cleanup failed for thought %s",
+                        md.name,
+                    )
 
     def _index_thought(self, md: Path, report: IndexReport) -> None:
         slug = md.stem
@@ -619,6 +668,90 @@ class Indexer:
             report.new += 1
         else:
             report.updated += 1
+
+    # -----------------------------------------------------------------
+    # Stale-row cleanup on in-place frontmatter changes
+    # -----------------------------------------------------------------
+
+    # Map table → (pk_col, src_type for links)
+    _NODE_TABLE_META = {
+        "papers":   ("paper_key",  "paper"),
+        "notes":    ("zotero_key", "note"),
+        "topics":   ("slug",       "topic"),
+        "thoughts": ("slug",       "thought"),
+    }
+
+    def _delete_stale_node_row(self, table: str, key: str) -> bool:
+        """Remove DB rows for a node whose md exists on disk but
+        whose frontmatter is no longer valid for `table` (kind
+        mismatch, YAML corrupt, field missing, etc.).
+
+        Pre-v0.27.10 the indexer returned silently in this
+        situation, leaving a stale row that would keep surfacing
+        in search / backlinks / graph until the md file itself
+        was deleted. v0.27.10 makes the indexer DELETE the
+        stale row (plus all FK-cascading + FTS + chunk + link
+        side-table entries) defensively.
+
+        Returns True iff a row actually existed and was removed.
+        """
+        pk_col, src_type = self._NODE_TABLE_META[table]
+        row = self.store.execute(
+            f"SELECT 1 FROM {table} WHERE {pk_col} = ?", (key,),
+        ).fetchone()
+        if not row:
+            return False
+
+        # Paper-specific side tables: FK CASCADE takes paper_tags,
+        # paper_collections, paper_attachments. We still have to
+        # handle paper_chunk_meta (has FK but we don't always run
+        # with PRAGMA foreign_keys=ON), paper_chunks_vec (vec0 has
+        # no FK), and paper_fts (virtual table, no FK).
+        if table == "papers":
+            chunk_ids = [
+                r["chunk_id"] for r in self.store.execute(
+                    "SELECT chunk_id FROM paper_chunk_meta "
+                    "WHERE paper_key = ?", (key,),
+                ).fetchall()
+            ]
+            self.store.execute(
+                "DELETE FROM paper_chunk_meta WHERE paper_key = ?",
+                (key,),
+            )
+            if chunk_ids and self.store.vec_available:
+                cid_ph = ",".join("?" * len(chunk_ids))
+                self.store.execute(
+                    f"DELETE FROM paper_chunks_vec "
+                    f"WHERE chunk_id IN ({cid_ph})",
+                    tuple(chunk_ids),
+                )
+            self.store.execute(
+                "DELETE FROM paper_fts WHERE paper_key = ?", (key,),
+            )
+
+        self.store.execute(
+            f"DELETE FROM {table} WHERE {pk_col} = ?", (key,),
+        )
+        # Outbound links: gone; inbound links: reclassify as
+        # dangling (matches _remove_orphans semantics — a deleted
+        # node might come back; edges from others pointing at it
+        # are still meaningful metadata).
+        self.store.execute(
+            "DELETE FROM links WHERE src_type = ? AND src_key = ?",
+            (src_type, key),
+        )
+        self.store.execute(
+            "UPDATE links SET dst_type = 'dangling' "
+            "WHERE dst_type = ? AND dst_key = ?",
+            (src_type, key),
+        )
+        self.store.commit()
+        log.info(
+            "Cleaned stale DB row: %s(%s=%r) — md exists but "
+            "frontmatter no longer identifies it as that node type.",
+            table, pk_col, key,
+        )
+        return True
 
     # -----------------------------------------------------------------
     # Orphan cleanup
@@ -749,7 +882,18 @@ class Indexer:
         # Gather chunks from all papers first, then batch.
         # Struct: list of (paper_key, chunk_meta_tuple, text)
         # chunk_meta_tuple = (kind, section_num, section_title)
+        #
+        # v0.27.10: also track expected_per_paper so we can tell
+        # "paper P was fully embedded" (inserted == expected) from
+        # "paper P was partially embedded" (inserted < expected
+        # because some batch failed mid-stream). The pre-0.27.10
+        # code flagged ANY paper with at least one successful
+        # chunk as embedded=1, which left papers in a
+        # DB-says-embedded-but-chunks-are-incomplete state that
+        # future reindexes wouldn't retry (embedded=1 path skips
+        # queueing).
         all_chunks: list[tuple[str, tuple, str]] = []
+        expected_per_paper: dict[str, int] = {}
         for pk in pending:
             try:
                 chunks = self._chunk_paper(pk)
@@ -757,8 +901,12 @@ class Indexer:
                 log.warning("Could not chunk paper %s: %s", pk, e)
                 report.embed_failed += 1
                 continue
+            n = 0
             for meta, text in chunks:
                 all_chunks.append((pk, meta, text))
+                n += 1
+            if n:
+                expected_per_paper[pk] = n
 
         if not all_chunks:
             log.info("No embeddable content across %d paper(s).", len(pending))
@@ -784,23 +932,24 @@ class Indexer:
                 tuple(old_ids),
             )
 
-        # Call API in batches.
-        success_papers: set[str] = set()
+        # Call API in batches. Track per-paper inserted count so we
+        # can detect partials after the loop.
+        inserted_per_paper: dict[str, int] = {}
         for batch_start in range(0, len(all_chunks), self._batch_size):
             batch = all_chunks[batch_start:batch_start + self._batch_size]
             texts = [t for (_pk, _meta, t) in batch]
             try:
                 result = self._embedder.embed(texts)
             except Exception as e:
-                # One batch failed. Mark all papers in this batch as
-                # failed so they're retried next run. Continue with
-                # other batches rather than aborting the whole pass.
+                # One batch failed. Continue with other batches
+                # rather than aborting the whole pass — but the
+                # paper-completeness check after the loop will
+                # catch any paper whose chunks straddled this
+                # failed batch and prevent a false embedded=1.
                 log.warning(
                     "Embedding batch failed (%d texts): %s",
                     len(texts), e,
                 )
-                for pk, _meta, _t in batch:
-                    report.embed_failed += 1 if pk not in success_papers else 0
                 continue
 
             report.embed_api_calls += 1
@@ -822,21 +971,74 @@ class Indexer:
                     "VALUES (?, ?)",
                     (chunk_id, _vec_blob(vec)),
                 )
-                success_papers.add(pk)
+                inserted_per_paper[pk] = inserted_per_paper.get(pk, 0) + 1
                 report.embedded_chunks += 1
+
+        # v0.27.10: separate "fully embedded" from "partially
+        # embedded". Only the former gets embedded=1.
+        fully_embedded: list[str] = []
+        partially_embedded: list[str] = []
+        for pk, expected in expected_per_paper.items():
+            inserted = inserted_per_paper.get(pk, 0)
+            if inserted == expected:
+                fully_embedded.append(pk)
+            else:
+                # This paper straddled a failed batch. Count it as
+                # an embed failure so reports are accurate.
+                report.embed_failed += 1
+                if inserted > 0:
+                    partially_embedded.append(pk)
+
+        # Delete the partial rows so the papers/paper_chunk_meta
+        # state stays coherent (no half-present papers). The
+        # paper's md_mtime row itself is left alone — embedded=0,
+        # and the _index_paper mtime-unchanged branch will
+        # re-queue it for embedding on the next reindex run.
+        if partially_embedded:
+            log.warning(
+                "Partial embedding (will be retried next run): "
+                "%d paper(s) had chunks in a failed batch — "
+                "cleaning their partial rows.",
+                len(partially_embedded),
+            )
+            pp_ph = ",".join("?" * len(partially_embedded))
+            partial_chunk_ids = [
+                r["chunk_id"] for r in self.store.execute(
+                    f"SELECT chunk_id FROM paper_chunk_meta "
+                    f"WHERE paper_key IN ({pp_ph})",
+                    tuple(partially_embedded),
+                ).fetchall()
+            ]
+            self.store.execute(
+                f"DELETE FROM paper_chunk_meta "
+                f"WHERE paper_key IN ({pp_ph})",
+                tuple(partially_embedded),
+            )
+            if partial_chunk_ids and self.store.vec_available:
+                cid_ph = ",".join("?" * len(partial_chunk_ids))
+                self.store.execute(
+                    f"DELETE FROM paper_chunks_vec "
+                    f"WHERE chunk_id IN ({cid_ph})",
+                    tuple(partial_chunk_ids),
+                )
+            # Also discount the chunks we just deleted from the
+            # reported total (they aren't really "embedded").
+            report.embedded_chunks -= sum(
+                inserted_per_paper.get(pk, 0) for pk in partially_embedded
+            )
 
         # Mark successfully-embedded papers in the papers table.
         # v26: the PK is paper_key (md stem), matching what we pushed
         # onto _pending_embed and what survived the embedding call.
-        if success_papers:
-            placeholders = ",".join("?" * len(success_papers))
+        if fully_embedded:
+            placeholders = ",".join("?" * len(fully_embedded))
             self.store.execute(
                 f"UPDATE papers SET embedded = 1, "
                 f"embedding_model = ?, embedded_at = ? "
                 f"WHERE paper_key IN ({placeholders})",
-                (self._embedder.model_name, _now_iso(), *success_papers),
+                (self._embedder.model_name, _now_iso(), *fully_embedded),
             )
-        report.embedded_papers = len(success_papers)
+        report.embedded_papers = len(fully_embedded)
         self.store.commit()
         log.info(
             "Embedded %d papers → %d chunks in %d API call(s), %d tokens total.",
