@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "kb-mcp"
-version = "0.27.7"
+version = "0.27.8"
 description = "Projection + MCP server exposing the ee-kb knowledge base to AI clients."
 readme = "README.md"
 requires-python = ">=3.10"

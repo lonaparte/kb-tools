@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "kb-citations"
-version = "0.27.7"
+version = "0.27.8"
 description = "Fetch paper-to-paper citation edges from public APIs (Semantic Scholar, OpenAlex) and inject them into the ee-kb link graph."
 readme = "README.md"
 requires-python = ">=3.10"

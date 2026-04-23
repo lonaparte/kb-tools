@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "kb-write"
-version = "0.27.7"
+version = "0.27.8"
 description = "Client-agnostic write layer for the ee-kb knowledge base."
 readme = "README.md"
 requires-python = ">=3.10"
