@@ -146,14 +146,27 @@ def auto_commit(
     # Stage. Goes through the retry wrapper — `git add` takes the
     # index lock too, and on a busy repo is the more common point
     # to collide since `add` happens before `commit`.
+    file_args = [str(f) for f in files]
     r = _run_git_with_retry(
-        ["git", "-C", str(kb_root), "add", "--"] + [str(f) for f in files],
+        ["git", "-C", str(kb_root), "add", "--"] + file_args,
     )
     if r.returncode != 0:
         raise GitError(f"git add failed: {r.stderr.strip()}")
 
+    # v0.27.5: pass the file list as a pathspec to the commit step.
+    # Without it, `git commit` commits the WHOLE index, so at high
+    # concurrency process B's commit sweeps process A's staged
+    # files into B's commit — leaving A's later `git commit` with
+    # "nothing added to commit" even though A's md is on disk
+    # (field report: 68/100 at 100-way --no-lock saw this). With
+    # pathspec, each process commits ONLY the files it passed in,
+    # so the worst case now is "the other process ran concurrently
+    # and already committed my file" — which is a silent no-op
+    # (md on disk + in git, just under the other process's commit
+    # subject) rather than an error.
     return _commit_if_staged(
         kb_root, op=op, target=target, message_body=message_body,
+        files=file_args,
     )
 
 
@@ -191,16 +204,26 @@ def _commit_if_staged(
     op: str,
     target: str,
     message_body: str | None,
+    files: Sequence[str] | None = None,
 ) -> str | None:
     """Shared tail: check `git diff --cached --quiet`, commit if
-    non-clean, return SHA."""
-    # Check whether anything is actually staged. Uses the retry
-    # wrapper too — `git diff --cached` itself doesn't TAKE the
-    # lock but reads the index, and a mid-commit race can briefly
-    # surface transient errors.
-    r = _run_git_with_retry(
-        ["git", "-C", str(kb_root), "diff", "--cached", "--quiet"],
-    )
+    non-clean, return SHA.
+
+    If `files` is provided, both the staged-check and the commit
+    are scoped to that pathspec — so concurrent auto_commits on
+    disjoint files don't accidentally sweep each other's staged
+    changes into one commit. `commit_staged()` (used by delete)
+    passes None to keep the historical "commit whatever's staged"
+    behaviour.
+    """
+    # Check whether anything is actually staged in this process's
+    # pathspec. Uses the retry wrapper — `git diff --cached`
+    # doesn't itself take the index lock but reads the index, and
+    # a mid-commit race can briefly surface transient errors.
+    diff_argv = ["git", "-C", str(kb_root), "diff", "--cached", "--quiet"]
+    if files:
+        diff_argv += ["--"] + list(files)
+    r = _run_git_with_retry(diff_argv)
     if r.returncode == 0:
         log.debug("auto_commit: nothing to commit for %s.", target)
         return None
@@ -213,10 +236,29 @@ def _commit_if_staged(
         msg_parts.append(message_body.rstrip())
     full_msg = "\n".join(msg_parts)
 
-    r = _run_git_with_retry(
-        ["git", "-C", str(kb_root), "commit", "-m", full_msg],
-    )
+    commit_argv = ["git", "-C", str(kb_root), "commit", "-m", full_msg]
+    if files:
+        commit_argv += ["--"] + list(files)
+    r = _run_git_with_retry(commit_argv)
     if r.returncode != 0:
+        # v0.27.5: at very high concurrency, a sibling process can
+        # stage+commit our file between our diff-cached check and
+        # our commit call. `git commit -- <pathspec>` then exits
+        # non-zero with "nothing to commit" / "nothing added to
+        # commit" — the md is on disk AND already in git under
+        # the other process's commit, so this is not a data-loss
+        # failure. Swallow quietly and return None.
+        err_low = (r.stderr + r.stdout).lower()
+        if (
+            "nothing to commit" in err_low
+            or "nothing added to commit" in err_low
+            or "no changes added to commit" in err_low
+        ):
+            log.debug(
+                "auto_commit: %s already committed by a sibling "
+                "process — skipping.", target,
+            )
+            return None
         raise GitError(f"git commit failed: {r.stderr.strip() or r.stdout.strip()}")
 
     # Grab the SHA.
