@@ -118,3 +118,54 @@ class TestBatchSizeValidation:
         assert _validate_batch_size(50, "unknown") == 50
         assert _validate_batch_size(150, "unknown") == 150
         assert _validate_batch_size(5000, "unknown") == 5000
+
+
+class TestEmbeddingDimStrictParsing:
+    """`embeddings.dim` goes through `_parse_positive_int` in
+    load_config, matching the strictness of `batch_size`. Pre-fix,
+    it was a bare `emb_cfg.get("dim")` — bool / float / negative /
+    string values slipped through and failed later at INSERT time
+    with a confusing sqlite-vec error. These tests verify that a
+    dim typo is caught at config load.
+    """
+
+    def test_valid_positive_int_accepted(self):
+        """The only valid shape for dim is a positive integer."""
+        from kb_mcp.config import _parse_positive_int
+        assert _parse_positive_int(1536, field="embeddings.dim") == 1536
+        assert _parse_positive_int(768, field="embeddings.dim") == 768
+
+    def test_zero_rejected(self):
+        from kb_mcp.config import _parse_positive_int
+        with pytest.raises(ConfigError) as exc:
+            _parse_positive_int(0, field="embeddings.dim")
+        assert "positive integer" in str(exc.value)
+
+    def test_negative_rejected(self):
+        from kb_mcp.config import _parse_positive_int
+        with pytest.raises(ConfigError) as exc:
+            _parse_positive_int(-1, field="embeddings.dim")
+        assert "positive integer" in str(exc.value)
+
+    def test_bool_rejected(self):
+        """YAML `true`/`false` parses to Python bool, which is an
+        int subclass. Silently accepting `dim: true` as 1 would be
+        a confusing footgun."""
+        from kb_mcp.config import _parse_positive_int
+        with pytest.raises(ConfigError) as exc:
+            _parse_positive_int(True, field="embeddings.dim")
+        assert "bool" in str(exc.value)
+
+    def test_float_rejected(self):
+        """YAML `1536.0` parses to float. int(1536.0) == 1536 but
+        int(1536.5) silently truncates to 1536 — reject outright."""
+        from kb_mcp.config import _parse_positive_int
+        with pytest.raises(ConfigError) as exc:
+            _parse_positive_int(1536.0, field="embeddings.dim")
+        assert "float" in str(exc.value)
+
+    def test_bad_string_rejected(self):
+        from kb_mcp.config import _parse_positive_int
+        with pytest.raises(ConfigError) as exc:
+            _parse_positive_int("not-an-int", field="embeddings.dim")
+        assert "not an integer" in str(exc.value)

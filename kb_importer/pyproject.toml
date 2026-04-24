@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "kb-importer"
 version = "1.2.0"
-description = "Translate a Zotero library into KB markdown files via the Zotero local API."
+description = "Translate a Zotero library into KB markdown files via Zotero web or local APIs."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }

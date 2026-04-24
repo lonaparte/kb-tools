@@ -140,8 +140,25 @@ def run_embedding_pass(indexer, report) -> None:
         report.embed_tokens += result.prompt_tokens
 
         # Insert chunk_meta rows (autoincrement gives chunk_id),
-        # then the corresponding vec rows.
+        # then the corresponding vec rows. Explicit dim check here
+        # because sqlite-vec's own error for a wrong-sized vector
+        # ("vec_f32(X) needs N bytes, got M") doesn't tell the user
+        # that the root cause is a provider/model switch. Ours does.
+        expected_dim = indexer.store.vec_dim
         for (pk, meta, text), vec in zip(batch, result.vectors):
+            if len(vec) != expected_dim:
+                raise ValueError(
+                    f"embedding dimension mismatch for paper {pk!r}: "
+                    f"provider returned {len(vec)}-dim vectors, but "
+                    f"paper_chunks_vec table expects {expected_dim}. "
+                    f"This happens when you switch embedding model / "
+                    f"provider without rebuilding the vec0 table "
+                    f"(its dimension is compile-time fixed in the "
+                    f"schema). To fix: either set `embeddings.dim: "
+                    f"{expected_dim}` to go back to the old model, "
+                    f"or run `kb-mcp reindex --force --dim {len(vec)}` "
+                    f"to rebuild at the new dimension."
+                )
             kind, section_num, section_title = meta
             cur = indexer.store.execute(
                 "INSERT INTO paper_chunk_meta "
