@@ -5,6 +5,51 @@ All notable changes to ee-kb-tools.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is our own (calendar-ish, per-major-iteration).
 
+## [0.29.8] — 2026-04-24
+
+Fresh-venv acceptance test caught two silent-failure bugs: init
+skipped config scaffolds when `.ee-kb-tools/` didn't exist, and
+doctor silently passed md files with broken YAML.
+
+### Fixed
+
+- **`kb-write init` now auto-creates `.ee-kb-tools/config/` in the
+  canonical workspace layout.** Pre-0.29.8, init only scaffolded
+  config YAMLs if `<kb_root>/../.ee-kb-tools/` already existed —
+  policy comment cited "don't create files outside kb_root
+  unexpectedly". But a user following the fresh-workspace flow
+  (`mkdir -p workspace/{ee-kb,zotero/storage} && cd ee-kb &&
+  kb-write init`) ended up with a working KB scaffold and no
+  config files, then hit unhelpful autodetect errors later.
+
+  New rule: if `kb_root.name == "ee-kb"` (canonical layout
+  indicated by directory name), init treats the parent as a
+  workspace parent and creates `.ee-kb-tools/config/` with the
+  four scaffolds. Non-canonical `kb_root` names still skip —
+  avoids polluting `$HOME/` if a user points `--kb-root` at
+  `$HOME/research/` rather than a dedicated `ee-kb` dir. The
+  pre-existing "don't overwrite existing configs even with
+  --force" guard is unchanged.
+
+- **`kb-write doctor` now catches broken frontmatter.**
+  Pre-0.29.8 doctor's per-type checks (papers / thoughts / topics)
+  called `frontmatter.load()` with `except Exception: continue` —
+  silently skipping unparseable files on the assumption another
+  check would surface them. Not true for thoughts / topics: no
+  other check parsed their YAML. Result: `doctor` reported "0
+  findings" on a thought with unterminated brackets. Added a
+  dedicated `_check_parse_errors` pass that runs first across all
+  content subdirs (papers/, topics/standalone-note/,
+  topics/agent-created/, thoughts/, .agent-prefs/) and flags each
+  unparseable md as a `parse-error` finding with severity=error.
+
+### Verification
+
+- Reproduced both bugs on 0.29.7, then verified fixes in a fresh
+  /tmp/acceptance venv + /tmp/ws_acc scratch workspace.
+- All four lints + 404 unit tests green.
+- Scaffold-presence consistency check still clean.
+
 ## [0.29.7] — 2026-04-24
 
 Tightens argparse validators to close silent-corruption /

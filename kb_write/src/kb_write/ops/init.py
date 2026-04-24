@@ -124,10 +124,24 @@ def init_kb(
         else:
             created.append(dest_rel)
 
-    # 3. Workspace config scaffolds. Only do this if kb_root is the
-    #    sibling of a `.ee-kb-tools/` directory — otherwise, the user
-    #    hasn't opted into the canonical workspace layout, and we
-    #    don't want to create files outside kb_root unexpectedly.
+    # 3. Workspace config scaffolds.
+    #
+    #    When kb_root uses the canonical name `ee-kb`, we treat its
+    #    parent directory as a workspace parent and will auto-create
+    #    `<parent>/.ee-kb-tools/config/` if it doesn't exist. This is
+    #    what the user wants in the fresh-workspace scenario (mkdir -p
+    #    workspace/{ee-kb,zotero/storage} && cd ee-kb && kb-write init)
+    #    — pre-0.29.8 this path silently skipped config scaffolding,
+    #    leaving the user with a KB and no config files.
+    #
+    #    When kb_root has a non-canonical name (e.g. a user pointed
+    #    --kb-root at some custom dir like $HOME/research/), we
+    #    refuse to auto-create `.ee-kb-tools/` because the parent
+    #    directory might be one we shouldn't pollute ($HOME in that
+    #    example). Pre-existing `.ee-kb-tools/` still triggers
+    #    scaffolding regardless of kb_root name, so the deploy.sh
+    #    layout (where `.ee-kb-tools/` is explicitly set up before
+    #    init) is unaffected.
     #
     # v25 behaviour: config YAMLs are NEVER overwritten, not even
     # with --force. `--force` is meant to re-scaffold the KB's
@@ -143,9 +157,11 @@ def init_kb(
     # delete the file manually and re-run init; init will then
     # create the scaffold because the file is missing, not because
     # --force told it to overwrite.
-    from ..workspace import TOOLS_DIR_NAME
+    from ..workspace import TOOLS_DIR_NAME, KB_DIR_NAME
     tools_dir = kb_root.parent / TOOLS_DIR_NAME
-    if tools_dir.exists():
+    canonical_kb_name = (kb_root.name == KB_DIR_NAME)
+    should_scaffold_config = tools_dir.exists() or canonical_kb_name
+    if should_scaffold_config:
         config_dir = tools_dir / "config"
         config_dir.mkdir(parents=True, exist_ok=True)
         config_scaffolds = (

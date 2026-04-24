@@ -91,6 +91,7 @@ def doctor(
     kb_root = ctx.kb_root
 
     _check_scaffold(kb_root, report, fix=fix)
+    _check_parse_errors(kb_root, report)
     _check_papers(kb_root, report, fix=fix)
     _check_notes(kb_root, report, fix=fix)
     _check_thoughts(kb_root, report)
@@ -101,6 +102,38 @@ def doctor(
     _check_list_duplicates(kb_root, report, fix=fix)
 
     return report
+
+
+# ----------------------------------------------------------------------
+# Parse errors: every .md under the known content subdirs must have
+# valid frontmatter. Downstream checks silently skip unparseable
+# files; without this check, a broken YAML would not surface anywhere.
+# 0.29.8: added after acceptance-test uncovered that doctor reported
+# "0 findings" on a thought with unterminated YAML brackets.
+# ----------------------------------------------------------------------
+
+def _check_parse_errors(kb_root: Path, report: DoctorReport) -> None:
+    for subdir in ("papers", "topics/standalone-note",
+                   "topics/agent-created", "thoughts", ".agent-prefs"):
+        d = kb_root / subdir
+        if not d.exists():
+            continue
+        for md in sorted(d.rglob("*.md")):
+            if md.name.startswith("."):
+                continue
+            # README files under subdirs (e.g. .agent-prefs/README.md)
+            # are documentation, not content — skip them.
+            if md.name.lower() == "readme.md":
+                continue
+            rel = md.relative_to(kb_root).as_posix()
+            try:
+                frontmatter.load(str(md))
+            except Exception as e:
+                report.findings.append(Finding(
+                    severity="error", category="parse-error", path=rel,
+                    message=f"could not parse frontmatter: {e}",
+                    auto_fixable=False,
+                ))
 
 
 # ----------------------------------------------------------------------
