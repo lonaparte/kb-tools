@@ -125,41 +125,67 @@ def _parse_positive_int(value, *, field: str) -> int:
 def _validate_log_level(level: str) -> str:
     """Validate log level string against Python's valid logging levels.
 
-    Accepts: debug, info, warning, error, critical (case-insensitive).
-    Raises ConfigError on invalid level.
+    Accepts the canonical five (debug / info / warning / error / critical)
+    plus the two aliases Python's `logging` module defines:
+    `logging.FATAL` == `logging.CRITICAL` (same integer, 50), and
+    `logging.WARN` is a deprecated-but-working alias of WARNING.
+    Rejecting these aliases would be a regression — pre-validation,
+    `getattr(logging, "FATAL".upper(), logging.INFO)` returned
+    `logging.CRITICAL` correctly. We normalise aliases to their
+    canonical form so downstream code only has to handle the five.
+
+    Case-insensitive; surrounding whitespace stripped. Raises
+    ConfigError on anything else.
     """
-    valid_levels = {"debug", "info", "warning", "error", "critical"}
+    canonical = {"debug", "info", "warning", "error", "critical"}
+    # Aliases mapped to their canonical name.
+    aliases = {"fatal": "critical", "warn": "warning"}
     level_lower = level.lower().strip()
-    if level_lower not in valid_levels:
-        raise ConfigError(
-            f"Invalid log_level {level!r}. Must be one of: "
-            f"{', '.join(sorted(valid_levels))}"
-        )
-    return level_lower
+    if level_lower in canonical:
+        return level_lower
+    if level_lower in aliases:
+        return aliases[level_lower]
+    raise ConfigError(
+        f"Invalid log_level {level!r}. Must be one of: "
+        f"{', '.join(sorted(canonical))} (aliases: "
+        f"{', '.join(sorted(aliases))})."
+    )
 
 
 def _validate_batch_size(size: int, provider: str) -> int:
-    """Validate and cap batch_size per provider limits.
+    """Validate `embeddings.batch_size` against provider-specific limits.
 
-    Provider limits:
-    - OpenAI: 2048 inputs/call
-    - Gemini: 100 inputs/call
-    - OpenRouter: 2048 inputs/call (inherits OpenAI limits)
+    Known provider limits (see provider docs / request-size pages):
+      - openai          : 2048 inputs/call on text-embedding-3-*
+      - openrouter      : 2048 (same wire format as OpenAI)
+      - gemini          : 100 via the embed_content API
 
-    If size exceeds the limit, log a warning and cap to the maximum.
+    Behavior:
+      - Size within the provider's limit → returned unchanged.
+      - Size over a KNOWN provider's limit → ConfigError.
+        Silent capping is worse — the user wrote X expecting X, and
+        will be surprised to see smaller batches at runtime. A
+        ConfigError at load time forces them to decide: raise their
+        expectations to match, or lower the value to the cap.
+      - UNKNOWN provider (e.g. a custom OpenAI-compatible gateway
+        reached via `openai_base_url`, like Ollama / vLLM / DashScope)
+        → accepted unchanged. We can't know the gateway's limit;
+        artificially capping would punish exactly the self-hosted
+        setups kb-mcp's scaffold explicitly supports. The user owns
+        their local endpoint's quirks.
     """
-    import logging
-    log = logging.getLogger(__name__)
-
-    limits = {"openai": 2048, "gemini": 100, "openrouter": 2048}
-    max_size = limits.get(provider, 100)  # default to most conservative
-
+    limits = {"openai": 2048, "openrouter": 2048, "gemini": 100}
+    max_size = limits.get(provider)
+    if max_size is None:
+        # Unknown provider: trust the user.
+        return size
     if size > max_size:
-        log.warning(
-            f"embeddings.batch_size {size} exceeds {provider} limit {max_size}, "
-            f"capping to {max_size}"
+        raise ConfigError(
+            f"embeddings.batch_size is {size}, but provider "
+            f"{provider!r} accepts at most {max_size} inputs per "
+            f"call. Lower the YAML setting (or switch provider) — "
+            f"runtime would otherwise get HTTP 400 on every batch."
         )
-        return max_size
     return size
 
 
