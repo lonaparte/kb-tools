@@ -90,18 +90,35 @@ def make_thought_slug(title: str, *, today: date | None = None) -> str:
 
     Strategy: kebab-case the title (ASCII + digits + hyphens only),
     prepend today's date. Drops non-ASCII characters silently —
-    titles in CJK become empty-slugged so caller gets
-    `2026-04-22-thought` (with a fallback word). Encourage agents
-    to either provide a descriptive English title OR explicit slug.
+    titles in CJK lose all their characters in the ASCII strip.
+
+    v0.28.2 fix for stress finding G10: when the ASCII-strip yields
+    empty (title was all CJK / emoji / punctuation), we previously
+    fell back to the literal word "thought", which made every
+    CJK-titled same-day thought collide on `YYYY-MM-DD-thought`.
+    Now we append 6 hex chars of entropy (from os.urandom) so each
+    such auto-slug is unique. The user still sees a placeholder slug
+    ("thought") with a suffix — they're encouraged to provide an
+    explicit --slug or an English-containing title, but they won't
+    hit WriteExistsError when they don't.
     """
     d = today or date.today()
     raw = title.strip().lower()
     # Replace non-alphanumerics with hyphen.
     slug = re.sub(r"[^a-z0-9]+", "-", raw).strip("-")
+    fallback_used = False
     if not slug:
         slug = "thought"
+        fallback_used = True
     # Cap length so file system paths stay sane.
-    slug = slug[:60].strip("-") or "thought"
+    slug = slug[:60].strip("-")
+    if not slug:
+        slug = "thought"
+        fallback_used = True
+    if fallback_used:
+        # Entropy suffix keeps same-day CJK / emoji titles unique.
+        import os as _os
+        slug = f"{slug}-{_os.urandom(3).hex()}"
     return f"{d.isoformat()}-{slug}"
 
 
@@ -175,19 +192,34 @@ def validate_not_outside_kb(kb_root: Path, candidate: Path) -> None:
 # kb_refs entry validation
 # --------------------------------------------------------------
 
+_PAPER_KEY_RE = re.compile(r"^[A-Z0-9]{8}(?:-ch\d+)?$")
+
+
 def validate_kb_ref_entry(entry: str) -> None:
     """Ensure a kb_refs entry is well-formed.
 
     Permitted shapes (v26, per AGENT-WRITE-RULES §9):
-      - `papers/<KEY>`                 — external paper / book / chapter md
-      - `topics/standalone-note/<KEY>` — Zotero standalone note (rare)
-      - `topics/agent-created/<SLUG>`  — AI-generated topic synthesis
-      - `thoughts/<SLUG>`              — AI-generated thought
-      - bare `<key>` — discouraged but allowed (caller disambiguates)
+      - `papers/<KEY>`                 — external paper / book / chapter md;
+                                         KEY is 8-char Zotero uppercase
+                                         alphanumeric, optionally followed
+                                         by `-ch<NN>` for chapters.
+      - `topics/standalone-note/<KEY>` — Zotero standalone note (rare);
+                                         KEY is 8-char Zotero uppercase.
+      - `topics/agent-created/<SLUG>`  — AI-generated topic synthesis;
+                                         SLUG is kebab-case.
+      - `thoughts/<SLUG>`              — AI-generated thought;
+                                         SLUG is YYYY-MM-DD-kebab.
+      - bare `<key>` — discouraged but allowed (caller disambiguates).
 
     Refuses deprecated v25 forms (`zotero-notes/...`, top-level
     `topics/<slug>` without sub-bucket) with a helpful error so
     the user knows to update their data.
+
+    v0.28.2 tightened: previously `papers/`, `thoughts/`,
+    `topics/agent-created/`, `topics/standalone-note/` with empty or
+    multi-segment tails all leaked through. Now each prefix enforces
+    exactly one remaining segment AND validates it against the
+    per-type slug/key rules.
     """
     if not isinstance(entry, str):
         raise RuleViolation(f"kb_refs entry is not a string: {entry!r}")
@@ -209,9 +241,42 @@ def validate_kb_ref_entry(entry: str) -> None:
             f"in v26. Use 'topics/standalone-note/<KEY>' instead."
         )
 
-    # v26 two-segment prefixes first.
-    if e.startswith("topics/standalone-note/") or e.startswith("topics/agent-created/"):
-        return
+    # v26 two-segment prefixes: exactly one tail segment, validated per-type.
+    for prefix, kind in (
+        ("topics/standalone-note/", "note"),
+        ("topics/agent-created/",   "topic"),
+    ):
+        if e.startswith(prefix):
+            tail = e[len(prefix):]
+            if not tail:
+                raise RuleViolation(
+                    f"kb_refs entry {entry!r}: {prefix!r} has empty tail; "
+                    f"expected {prefix}<{kind}-slug>."
+                )
+            if "/" in tail:
+                raise RuleViolation(
+                    f"kb_refs entry {entry!r}: {prefix!r} accepts one "
+                    f"segment, got {tail!r}."
+                )
+            if kind == "note":
+                # standalone-note uses Zotero keys.
+                if not _ZKEY_RE.match(tail):
+                    raise RuleViolation(
+                        f"kb_refs entry {entry!r}: {prefix} expects an "
+                        f"8-char Zotero key; got {tail!r}."
+                    )
+            else:
+                # agent-created topic uses kebab slug (no slashes — we
+                # rejected those above). validate_topic_slug would accept
+                # hierarchical slugs with '/' but we want flat under this
+                # prefix for clarity, so reuse just its character class.
+                if not re.match(r"^[a-z0-9][a-z0-9\-]*$", tail):
+                    raise RuleViolation(
+                        f"kb_refs entry {entry!r}: agent-created topic slug "
+                        f"must be lowercase kebab; got {tail!r}."
+                    )
+            return
+
     # top-level topics/<slug> without sub-bucket = legacy.
     if e.startswith("topics/"):
         sub = e[len("topics/"):]
@@ -220,11 +285,41 @@ def validate_kb_ref_entry(entry: str) -> None:
                 f"kb_refs entry {entry!r}: top-level 'topics/<slug>' "
                 f"is DEPRECATED in v26. Use 'topics/agent-created/<slug>'."
             )
+        # topics/<X>/... but X isn't a known sub-bucket: still illegal.
+        raise RuleViolation(
+            f"kb_refs entry {entry!r}: unknown topics sub-bucket "
+            f"{sub.split('/', 1)[0]!r}. Expected 'standalone-note' "
+            f"or 'agent-created'."
+        )
 
-    head = e.split("/", 1)[0]
+    head, _, tail = e.partition("/")
     if head not in ("papers", "thoughts"):
         raise RuleViolation(
             f"kb_refs subdir {head!r} unknown. Expected one of "
             "papers, topics/standalone-note, topics/agent-created, "
             "thoughts."
         )
+    # papers/ and thoughts/ accept exactly one tail segment.
+    if not tail:
+        raise RuleViolation(
+            f"kb_refs entry {entry!r}: {head}/ has empty tail; "
+            f"expected {head}/<{'KEY' if head == 'papers' else 'slug'}>."
+        )
+    if "/" in tail:
+        raise RuleViolation(
+            f"kb_refs entry {entry!r}: {head}/ accepts one segment, "
+            f"got {tail!r}."
+        )
+    if head == "papers":
+        if not _PAPER_KEY_RE.match(tail):
+            raise RuleViolation(
+                f"kb_refs entry {entry!r}: papers/ key must be 8-char "
+                f"Zotero uppercase alphanumeric, optionally with "
+                f"'-ch<NN>' chapter suffix. Got {tail!r}."
+            )
+    else:  # thoughts
+        if not _THOUGHT_SLUG_RE.match(tail):
+            raise RuleViolation(
+                f"kb_refs entry {entry!r}: thoughts/ slug must match "
+                f"YYYY-MM-DD-kebab. Got {tail!r}."
+            )

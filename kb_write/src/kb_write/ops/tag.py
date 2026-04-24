@@ -55,8 +55,24 @@ def add(
             return WriteResult(
                 address=address, md_path=md_path, mtime=actual_mtime,
                 git_sha=None, reindexed=False,
+                preview=(
+                    f"tag {tag!r} already present on "
+                    f"{address.md_rel_path} (current kb_tags: "
+                    f"{list(existing_fm.get('kb_tags') or [])!r}); "
+                    f"would be a no-op."
+                ),
             )
-        return WriteResult(address=address, md_path=md_path, mtime=0.0)
+        # v0.28.2: populate preview so _emit_result doesn't fall
+        # through to "(no changes — write would be a no-op)". Pre-0.28.2
+        # would-add dry-runs lied about outcome. G34 stress-run finding.
+        return WriteResult(
+            address=address, md_path=md_path, mtime=0.0,
+            preview=(
+                f"would add kb_tag {tag!r} to {address.md_rel_path}\n"
+                f"    before: {list(existing_fm.get('kb_tags') or [])!r}\n"
+                f"    after:  {list(new_fm.get('kb_tags') or [])!r}"
+            ),
+        )
 
     # v0.28.0: per-paper lock, not KB-root lock. Tag add/remove is
     # single-md scoped; global lock blocks concurrent writes to
@@ -126,8 +142,19 @@ def remove(
             return WriteResult(
                 address=address, md_path=md_path, mtime=actual_mtime,
                 git_sha=None, reindexed=False,
+                preview=(
+                    f"tag {tag!r} not present on "
+                    f"{address.md_rel_path}; would be a no-op."
+                ),
             )
-        return WriteResult(address=address, md_path=md_path, mtime=0.0)
+        return WriteResult(
+            address=address, md_path=md_path, mtime=0.0,
+            preview=(
+                f"would remove kb_tag {tag!r} from {address.md_rel_path}\n"
+                f"    before: {list(existing_fm.get('kb_tags') or [])!r}\n"
+                f"    after:  {list(new_fm.get('kb_tags') or [])!r}"
+            ),
+        )
 
     # v0.28.0: per-paper lock, not KB-root lock. Tag add/remove is
     # single-md scoped; global lock blocks concurrent writes to

@@ -65,6 +65,15 @@ class TestSafeResolveRejects:
         with pytest.raises(PathError):
             safe_resolve(kb, "")
 
+    def test_whitespace_only(self, kb):
+        # Docstring promises "empty OR whitespace-only" → PathError.
+        # Pre-0.28.2 the implementation was just `if not rel`, which
+        # accepted spaces/tabs and tried to resolve them as a literal
+        # filename. Regression test for the stress-run finding.
+        for s in ("   ", "\t", "\n", "  \t \n "):
+            with pytest.raises(PathError):
+                safe_resolve(kb, s)
+
     def test_absolute_posix(self, kb):
         with pytest.raises(PathError):
             safe_resolve(kb, "/etc/passwd")

@@ -49,7 +49,7 @@ def _run_fulltext_pass(
     from ..fulltext import extract_fulltext, SOURCE_UNAVAILABLE
     from ..summarize import (
         build_provider_from_env, summarize_paper, SummarizerError,
-        QuotaExhaustedError,
+        QuotaExhaustedError, BadRequestError,
     )
     from ..fulltext_writeback import (
         is_fulltext_processed, writeback_summary,
@@ -119,6 +119,12 @@ def _run_fulltext_pass(
         "model": args.fulltext_fallback_model or "",
         "activated": False,
         "stop": False,
+        # v0.28.2: track models that have already raised a permanent
+        # BadRequestError this run. Once a model is in here, we don't
+        # send anything else to it in this batch — retries would just
+        # hit the same 400/404. If the primary ends up in here, we
+        # try to switch to the fallback model once (same as quota).
+        "bad_request_models": set(),
     }
 
     def _try_fallback_after_quota(
@@ -192,6 +198,89 @@ def _run_fulltext_pass(
             f"  ↓ {key}  daily quota on {old_model}; switching to "
             f"{fallback_state['model']} for remaining papers"
             f"{retry_note}",
+            file=sys.stderr,
+        )
+        return True
+
+    def _try_fallback_after_bad_request(
+        err: BadRequestError, key: str,
+    ) -> bool:
+        """v0.28.2: BadRequestError = 400 / 404 from the provider.
+        Permanent for (input, model); retrying the SAME input to the
+        SAME model will always hit the same error. Two cases:
+
+          (a) The error is specific to THIS paper (e.g. fulltext
+              length overflow). Switching models won't help, we
+              should just record the failure and move on.
+          (b) The error is "model not found" / misconfigured model
+              name. Every paper will hit it. If fallback is
+              configured, activate it once (same mechanism as
+              quota); otherwise stop the batch.
+
+        Heuristic for (b): the error message contains "model" AND
+        ("not found" OR "not supported" OR "invalid"). This matches
+        Google's 404 "models/gemini-X is not found" and also their
+        400 "Model gemini-X is not supported" shapes.
+
+        Returns True if the caller should retry `key` on a new model;
+        False if this paper should be counted as failed and the
+        caller should move on. May set fallback_state["stop"] to
+        exit the whole batch when model-itself-bad + no fallback.
+        """
+        # Mark the model as poisoned for the rest of the run.
+        bad_model = err.model if hasattr(err, "model") and err.model else \
+            (provider.model if provider else "unknown")
+        fallback_state["bad_request_models"].add(bad_model)
+
+        msg = str(err).lower()
+        looks_model_related = (
+            "model" in msg
+            and any(s in msg for s in (
+                "not found", "not supported", "invalid", "does not exist",
+                "model_not_found",
+            ))
+        )
+
+        if not looks_model_related:
+            # Per-paper BadRequest. No retry, no batch-level action;
+            # just surface and move on.
+            return False
+
+        # Model-level BadRequest: would affect every paper in the
+        # batch. Try fallback once, same as quota flow.
+        if not fallback_state["enabled"]:
+            print(
+                f"  ✗ {key}  model {bad_model!r} rejected request "
+                f"(HTTP 400/404) and fallback disabled; stopping "
+                f"fulltext pass. Error: {err}",
+                file=sys.stderr,
+            )
+            fallback_state["stop"] = True
+            return False
+
+        if fallback_state["activated"]:
+            # Already switched once; the fallback itself is also
+            # rejecting. Don't chain further.
+            print(
+                f"  ✗ {key}  fallback model {bad_model!r} also "
+                f"rejected (HTTP 400/404). Stopping fulltext pass. "
+                f"Error: {err}",
+                file=sys.stderr,
+            )
+            fallback_state["stop"] = True
+            return False
+
+        old_model = provider.model if provider else bad_model
+        try:
+            provider.model = fallback_state["model"]
+        except Exception:
+            fallback_state["stop"] = True
+            return False
+        fallback_state["activated"] = True
+        print(
+            f"  ↓ {key}  model {old_model!r} rejected request as "
+            f"invalid/unsupported; switching to "
+            f"{fallback_state['model']!r} for remaining papers.",
             file=sys.stderr,
         )
         return True
@@ -351,6 +440,16 @@ def _run_fulltext_pass(
                     continue  # retry on new model / after sleep
                 last_err = e
                 break  # caller decided not to retry
+            except BadRequestError as e:
+                # v0.28.2: HTTP 400/404 → permanent for (input, model).
+                # Retry only if the model itself is the problem AND a
+                # fallback model is configured (see
+                # _try_fallback_after_bad_request heuristic).
+                if _try_fallback_after_bad_request(e, key):
+                    last_err = e
+                    continue
+                last_err = e
+                break
             except SummarizerError as e:
                 last_err = e
                 break
@@ -394,11 +493,12 @@ def _run_fulltext_pass(
                 print(f"  ✗ {key}  LLM failed: {last_err}",
                       file=sys.stderr)
                 llm_fail += 1
-                # HTTP 400-ish errors surface in the message; split
-                # them out so "summary is systematically broken for
-                # this paper" (e.g. fulltext too long) is distinct
-                # from "transient infra hiccup".
-                if "400" in _err_text or "bad request" in _err_text.lower():
+                # v0.28.2: classify by EXCEPTION TYPE, not string
+                # matching. BadRequestError is the typed signal that
+                # provider returned 400/404 (reviewer's point: the
+                # class already existed but wasn't used here; we
+                # were string-matching "400" at log time).
+                if isinstance(last_err, BadRequestError):
                     cat = REASON_LLM_BAD_REQUEST
                 else:
                     cat = REASON_LLM_OTHER
@@ -569,6 +669,13 @@ def _run_fulltext_pass(
                     break
                 except QuotaExhaustedError as e:
                     if _try_fallback_after_quota(e, key):
+                        last_err = e
+                        continue
+                    last_err = e
+                    break
+                except BadRequestError as e:
+                    # v0.28.2: same logic as short pipeline.
+                    if _try_fallback_after_bad_request(e, key):
                         last_err = e
                         continue
                     last_err = e

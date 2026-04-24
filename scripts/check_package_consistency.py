@@ -475,12 +475,44 @@ def check_fulltext_markers_sync() -> list[str]:
     return errors
 
 
+def check_schema_history_complete() -> list[str]:
+    """Every bump of EXPECTED_SCHEMA_VERSION must add a matching
+    `v<N> = ...` line in the history comment block above it.
+
+    Added in 0.28.2 after a reviewer caught v7 was live but
+    undocumented — the code itself said 'A missing entry is a
+    lint failure waiting to happen' but no lint actually enforced
+    it. Now we do.
+    """
+    errs: list[str] = []
+    store_py = REPO / "kb_mcp" / "src" / "kb_mcp" / "store.py"
+    text = store_py.read_text()
+    m = re.search(r"^EXPECTED_SCHEMA_VERSION\s*=\s*(\d+)", text, flags=re.MULTILINE)
+    if not m:
+        errs.append(f"couldn't find EXPECTED_SCHEMA_VERSION in {store_py}")
+        return errs
+    expected = int(m.group(1))
+    # Find version-history lines of the form `#   vN = ...`.
+    documented = set()
+    for hm in re.finditer(r"^#\s*v(\d+)\s*=", text, flags=re.MULTILINE):
+        documented.add(int(hm.group(1)))
+    for v in range(1, expected + 1):
+        if v not in documented:
+            errs.append(
+                f"store.py: EXPECTED_SCHEMA_VERSION={expected} but "
+                f"version history missing entry 'v{v} = ...'. Every "
+                f"bump must be documented in the schema-history comment."
+            )
+    return errs
+
+
 def main() -> int:
     errors: list[str] = []
     errors.extend(check_versions())
     errors.extend(check_core_shim_identity())
     errors.extend(check_agent_rules_sync())
     errors.extend(check_fulltext_markers_sync())
+    errors.extend(check_schema_history_complete())
     if errors:
         print("✗ package consistency check failed:", file=sys.stderr)
         for e in errors:
@@ -490,7 +522,7 @@ def main() -> int:
     v = (REPO / "VERSION").read_text().strip()
     print(
         f"✓ package consistency OK (VERSION={v}, kb_core shim identity, "
-        f"agent-rules parity, fulltext-markers parity)"
+        f"agent-rules parity, fulltext-markers parity, schema history complete)"
     )
     return 0
 

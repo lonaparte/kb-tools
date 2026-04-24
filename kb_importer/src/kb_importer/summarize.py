@@ -466,6 +466,22 @@ class GeminiProvider:
                     retry_after=retry_after,
                     model=self.model,
                 ) from e
+            # v0.28.2: HTTP 400 (bad request) and 404 (model not
+            # found) are PERMANENT failures for this request —
+            # retrying the same input to the same model will always
+            # hit the same error. Distinguish them via BadRequestError
+            # so the importer's retry loop can short-circuit (don't
+            # re-call) AND, if the model itself is the problem (404 /
+            # "model not found" in the detail), also stop trying
+            # THIS MODEL for the rest of the batch. Pre-0.28.2, both
+            # were buried in a generic SummarizerError and the
+            # caller string-matched '400' at log time but didn't
+            # change scheduling. Reviewer flagged this as "分类但不
+            # 调度" — now the scheduler branch sees the right type.
+            if e.code in (400, 404):
+                raise BadRequestError(
+                    f"gemini HTTP {e.code}: {detail or e.reason}"
+                ) from e
             raise SummarizerError(
                 f"gemini HTTP {e.code}: {detail or e.reason}"
             ) from e

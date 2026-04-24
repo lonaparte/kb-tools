@@ -5,6 +5,112 @@ All notable changes to ee-kb-tools.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is our own (calendar-ish, per-major-iteration).
 
+## [0.28.2] — 2026-04
+
+Bug-fix release from two independent code reviews plus the
+internal stress-run findings. Nine fixes and one lint-hardening.
+
+### Fixed
+
+- **kb_write RMW no longer silently corrupts BOM-prefixed md.**
+  Pre-0.28.2, `kb-write tag add` / `ref add` / `ai-zone append` on a
+  file that happened to have a UTF-8 BOM at byte 0 would rewrite it
+  with `kind: null`, `title: null`, BOM and CRLF both gone — because
+  python-frontmatter doesn't recognise `<BOM>---` as a delimiter.
+  `kb-mcp index` then correctly skipped the paper, leaving it
+  orphaned. Now `kb_write.frontmatter.read_md` refuses BOM-prefixed
+  files up-front with a pointed error, and also refuses any md whose
+  frontmatter parses to missing-or-None `kind`. Stress-run finding
+  G54; tests at `tests/unit/test_read_md_bom_guard.py`.
+
+- **Gemini provider raises `BadRequestError` typed, not generic
+  `SummarizerError`, for HTTP 400 / 404.** The class already existed
+  (code='bad_request'); the provider just wasn't using it. Reviewer:
+  "分类但不调度" — categorisation existed but didn't change retry
+  behavior. Fixed: (a) 400/404 now raise `BadRequestError`, (b) the
+  short + longform retry loops in `import_fulltext` have a new
+  except-branch that, on "model not found / invalid" shapes,
+  activates the fulltext fallback model (same path as quota). For
+  per-paper BadRequest (e.g. fulltext length overflow), the paper
+  is recorded as failed and the batch continues. Event
+  classification also drops the `"400" in err_text` string match in
+  favour of `isinstance(last_err, BadRequestError)`.
+  Tests at `tests/unit/test_bad_request_classification.py`.
+
+- **`kb_core.paths.safe_resolve` rejects whitespace-only paths.**
+  The function's docstring promised rejection but the implementation
+  only checked `if not rel`. A literal `"   "` would slip through to
+  be resolved as a whitespace filename. Now `if not rel or not
+  rel.strip()`. Test case added.
+
+- **`validate_kb_ref_entry` tightened with per-type tail validation.**
+  Pre-0.28.2 these shapes all leaked through: `papers/`,
+  `thoughts/`, `topics/agent-created/`, `topics/agent-created/a/b/c`,
+  `topics/standalone-note/`, `papers/BAD SLUG`, `papers/lowercase`,
+  `thoughts/not-date-prefixed`. Each prefix now enforces exactly one
+  tail segment AND validates it: papers needs an 8-char Zotero key
+  (optionally `-chNN`), thoughts needs YYYY-MM-DD-kebab,
+  agent-created topics need lowercase kebab, standalone-note needs
+  a Zotero key. New test file covers 38 cases.
+
+- **kb-mcp index promotes dangling edges when the target lands.**
+  Pre-0.28.2, `link_resolve.resolve_staged_links` only re-staged
+  edges for SRC mds whose mtime advanced. A user who imported paper
+  B after A pointed to it via `kb_refs: [papers/B]` had to ALSO
+  touch A for the edge to promote from dangling→paper — despite the
+  docstring claiming automatic promotion. Now a dedicated
+  `_promote_dangling_edges` pass runs at the end of every
+  `resolve_staged_links` and rewrites any `dst_type='dangling'`
+  rows whose key now resolves in the node tables. Cost: O(dangling
+  rows) — typically 0-few. IndexReport now carries a
+  `links_promoted` count. Stress-run finding G18; tests at
+  `tests/unit/test_dangling_promotion.py`.
+
+- **kb-write `--dry-run` preview on would-change ops.** Pre-0.28.2,
+  a dry-run tag/ref/ai-zone that WOULD make a change printed
+  "(no changes — write would be a no-op)" because the op returned
+  `WriteResult` with empty `diff` / `preview`. `_emit_result` then
+  fell through to the no-changes branch. Now each op populates
+  `preview` with a before/after rendering for both would-change and
+  would-be-no-op cases. Stress-run finding G34.
+
+- **kb-citations link on missing DB with empty cache returns rc=0.**
+  Pre-0.28.2, running `kb-citations link` on a KB without any cached
+  citations AND without a kb-mcp DB printed both "falling back to
+  JSONL dump" (log) AND "✗ link failed: DB error" (CLI summary) —
+  contradictory messages, rc=1. Since there are no edges to write,
+  the DB unavailability is inconsequential. Now reported as
+  `i no edges to write ... kb-mcp DB unavailable but not needed`
+  with rc=0. Stress-run finding G96.
+
+- **`make_thought_slug` appends entropy when title is all
+  non-ASCII.** Pre-0.28.2, a Chinese / emoji / punctuation-only
+  title would ASCII-strip to nothing and fall back to the literal
+  word `thought`, making every same-day non-ASCII thought slug
+  collide on `YYYY-MM-DD-thought`. Second creation fell through to
+  WriteExistsError. Now we suffix 6 hex chars of entropy when the
+  fallback word is used, so each auto-slug stays unique. Operators
+  are still encouraged to pass an explicit `--slug` or English
+  title. Stress-run finding G10.
+
+### Documented
+
+- **Schema history entry for v7** in `kb_mcp/store.py`. v7 went
+  live in 0.27.1 (repointed four side-table FKs from
+  `papers(zotero_key)` to `papers(paper_key)` after v6 made the
+  former non-unique) but the history comment block only documented
+  up to v6 — the same comment even warned "A missing entry is a
+  lint failure waiting to happen". Added the missing entry.
+
+### Added
+
+- **`scripts/check_package_consistency.py` now verifies schema
+  history completeness.** New `check_schema_history_complete()`
+  function parses `EXPECTED_SCHEMA_VERSION = N` and asserts the
+  history comment block contains one `# vX = ...` line for each X
+  in `1..N`. Prevents the class of bug that let v7 ship
+  undocumented.
+
 ## [0.28.1] — 2026-04
 
 Bug fix + doc-correction release from external reviewer feedback

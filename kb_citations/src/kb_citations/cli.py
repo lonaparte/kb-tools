@@ -343,6 +343,18 @@ def _cmd_link(args):
                   f"{report.fallback_file}")
             print(f"    ({report.db_error})")
             rc = 0   # graceful fallback is still a "ran ok" from link's POV
+        elif report.db_error and report.edges_emitted == 0:
+            # v0.28.2: no edges to write + DB unavailable = nothing
+            # to do. Previously we'd say "✗ link failed" even though
+            # there was no work and the user was probably just
+            # checking. Report as info, exit 0.
+            print(
+                f"  i no edges to write (scanned "
+                f"{report.cached_papers_scanned} cached papers); "
+                f"kb-mcp DB unavailable but not needed"
+            )
+            print(f"    ({report.db_error})")
+            rc = 0
         else:
             print(f"  ✗ link failed: {report.db_error}")
             rc = 1

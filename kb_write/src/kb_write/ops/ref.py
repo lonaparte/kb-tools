@@ -42,8 +42,19 @@ def add(
             return WriteResult(
                 address=address, md_path=md_path, mtime=actual_mtime,
                 git_sha=None, reindexed=False,
+                preview=(
+                    f"ref {ref!r} already present on "
+                    f"{address.md_rel_path}; would be a no-op."
+                ),
             )
-        return WriteResult(address=address, md_path=md_path, mtime=0.0)
+        return WriteResult(
+            address=address, md_path=md_path, mtime=0.0,
+            preview=(
+                f"would add kb_ref {ref!r} to {address.md_rel_path}\n"
+                f"    before: {list(existing_fm.get('kb_refs') or [])!r}\n"
+                f"    after:  {list(new_fm.get('kb_refs') or [])!r}"
+            ),
+        )
 
     # v0.28.0: per-paper lock — see tag.py for rationale.
     with write_lock_paper(ctx.kb_root, address.key) if ctx.lock else _nullcontext():
@@ -102,8 +113,19 @@ def remove(
             return WriteResult(
                 address=address, md_path=md_path, mtime=actual_mtime,
                 git_sha=None, reindexed=False,
+                preview=(
+                    f"ref {ref!r} not present on "
+                    f"{address.md_rel_path}; would be a no-op."
+                ),
             )
-        return WriteResult(address=address, md_path=md_path, mtime=0.0)
+        return WriteResult(
+            address=address, md_path=md_path, mtime=0.0,
+            preview=(
+                f"would remove kb_ref {ref!r} from {address.md_rel_path}\n"
+                f"    before: {list(existing_fm.get('kb_refs') or [])!r}\n"
+                f"    after:  {list(new_fm.get('kb_refs') or [])!r}"
+            ),
+        )
 
     # v0.28.0: per-paper lock — see tag.py for rationale.
     with write_lock_paper(ctx.kb_root, address.key) if ctx.lock else _nullcontext():

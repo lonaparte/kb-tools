@@ -36,13 +36,66 @@ def read_md(path: Path) -> tuple[dict, str, float]:
     mtime is captured at read time for the caller to pass back as
     expected_mtime in a later write — realizing the mtime guard
     protocol.
+
+    v0.28.2: refuses to return a silently-corrupt file. Two
+    defenses now fire before handing parsed data back:
+
+      (a) If the file starts with a UTF-8 BOM, raise a pointed
+          FrontmatterError. python-frontmatter doesn't recognise
+          `<BOM>---` as a delimiter, so it returns metadata={} and
+          every RMW op then writes back garbage (kind/title/zotero
+          fields dropped). Easier to just refuse up-front.
+
+      (b) If the parsed frontmatter is empty-or-missing-`kind`,
+          raise FrontmatterError. Every v26 md that kb-write is
+          supposed to touch (paper/thought/topic/note/preference)
+          carries a `kind:` field; its absence is either corruption
+          or a brand-new md from kb-write's own create path which
+          doesn't go through read_md.
+
+    Stress-run finding G54: pre-0.28.2, `kb-write tag add` on a
+    BOM-prefixed md silently rewrote the file as a fresh fm with
+    only `kb_tags: [...]`, dumping the original fm/body into the
+    new body as literal text. kb-mcp index then skipped the
+    paper entirely. Data lost, no warning.
     """
     path = Path(path)
     if not path.exists():
         raise FrontmatterError(f"{path} does not exist")
+
+    # (a) BOM check.  (b)'s check happens after the parse so that
+    # legitimately-empty-frontmatter files get a specific, useful error
+    # rather than a silent fall-through.
+    raw_head = path.open("rb").read(3)
+    if raw_head.startswith(b"\xef\xbb\xbf"):
+        raise FrontmatterError(
+            f"{path} starts with a UTF-8 BOM. python-frontmatter does "
+            f"not recognise BOM-prefixed `---` as a delimiter, which "
+            f"would make a read-modify-write lose the original "
+            f"frontmatter (kind, title, zotero_key, etc). Strip the "
+            f"BOM first (e.g. `sed -i '1s/^\\xEF\\xBB\\xBF//' FILE`) "
+            f"and retry."
+        )
+
     post = frontmatter.load(str(path))
     mtime = path.stat().st_mtime
-    return dict(post.metadata), post.content, mtime
+    fm = dict(post.metadata)
+
+    # (b) kind-present check. Non-RMW readers (doctor, indexer) go
+    # through their own parse paths; every kb-write op that reaches
+    # here is preparing to write back and MUST have a valid kind to
+    # preserve invariants.
+    if not fm or not fm.get("kind"):
+        raise FrontmatterError(
+            f"{path}: frontmatter is missing or has no `kind` field. "
+            f"Refusing to rewrite — a read-modify-write on this shape "
+            f"would silently drop the existing fields. If this file is "
+            f"new, use the appropriate kb-write `create` op instead of "
+            f"an update/tag/ref. If it's corrupt, inspect and repair "
+            f"manually."
+        )
+
+    return fm, post.content, mtime
 
 
 def write_md(

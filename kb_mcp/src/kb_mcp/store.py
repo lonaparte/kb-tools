@@ -61,6 +61,19 @@ log = logging.getLogger(__name__)
 #                  schema changes — side tables still reference
 #                  papers via `paper_key`, same column name, new
 #                  referent.
+#   v7 = FK-target fix for v6 regression. When v6 made
+#                  `papers.zotero_key` non-unique, the four side
+#                  tables (paper_attachments / paper_tags /
+#                  paper_collections / paper_chunk_meta) still
+#                  carried `REFERENCES papers(zotero_key)` from v5.
+#                  SQLite's FK checker requires the target to be
+#                  PK or UNIQUE; non-unique zotero_key meant every
+#                  INSERT into those side tables tripped
+#                  "foreign key mismatch". v7 repoints all four
+#                  FKs to `papers(paper_key)` (the new PK). No
+#                  column adds/drops; schema.sql diff is 4 × 1
+#                  line change, all in FK clauses. Shipped with
+#                  0.27.1; first correctly-documented in 0.28.2.
 #
 # When bumping this constant, add a `v<N+1> = ...` line above and
 # describe the change set in one line. A missing entry is a lint

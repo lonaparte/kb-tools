@@ -260,11 +260,18 @@ def link(
                      "(zero edges emitted this run).")
     else:
         report.db_error = err
-        log.warning("DB write failed (%s); "
-                    "falling back to JSONL dump.", err)
+        # v0.28.2: only log the "falling back to JSONL dump" line if
+        # we're actually going to produce a fallback file. Otherwise
+        # we'd claim fallback and then print "✗ link failed" in the
+        # CLI because no file got written. Three cases:
+        #   1. edges present + fallback path: real fallback.
+        #   2. no edges at all: no-op; don't claim fallback.
+        #   3. fallback_jsonl=False: caller opted out.
         if fallback_jsonl and edges:
-            # Only emit JSONL when we actually have edges; an empty
-            # fallback file serves no one.
+            log.warning(
+                "DB write failed (%s); falling back to JSONL dump.",
+                err,
+            )
             cache = CitationCache(kb_root)
             cache.ensure_dirs()
             out_path = cache.root / "citation-edges.jsonl"
@@ -272,5 +279,18 @@ def link(
                 for e in edges:
                     f.write(json.dumps(e, ensure_ascii=False) + "\n")
             report.fallback_file = out_path
+        elif not edges:
+            # Nothing to write. DB failure is inconsequential; log at
+            # info so we don't scare the user.
+            log.info(
+                "DB write failed (%s), but no edges to write anyway; "
+                "nothing to do.", err,
+            )
+        else:
+            # fallback_jsonl=False: user-requested strict mode.
+            log.warning(
+                "DB write failed (%s) and fallback_jsonl=False; "
+                "edges lost.", err,
+            )
 
     return report

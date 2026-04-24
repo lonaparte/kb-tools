@@ -63,12 +63,23 @@ def resolve_staged_links(indexer, report) -> None:
          - else try paper → topic → thought → note;
          - else mark as 'dangling' with ref.key verbatim.
       4. Batch-insert into links, deduping on full PK.
-
-    After this pass, `kb-mcp index` again will automatically promote
-    dangling edges to real ones if the missing target got added
-    (cached lookup maps are rebuilt each run).
+      5. v0.28.2 dangling-promotion pass (NEW): iterate existing
+         rows where dst_type='dangling' and retry resolution
+         against the current node tables. Any that now resolve get
+         their dst_type / dst_key updated in-place. This closes
+         the G18 gap: before 0.28.2, a dangling edge survived
+         until the SRC md's mtime advanced, because the incremental
+         indexer only re-stages refs for touched srcs. Now the
+         index pass ALWAYS sweeps dangling edges, so users who
+         import paper B see A's edge to B promote on the next
+         `kb-mcp index` whether or not A was touched.
     """
-    if not indexer._touched_srcs and not indexer._staged_links:
+    if (not indexer._touched_srcs
+            and not indexer._staged_links):
+        # No new work, but there might still be old dangling edges
+        # whose targets landed since the previous run. Run the
+        # promotion pass and return.
+        _promote_dangling_edges(indexer, report)
         return
 
     # 1. Purge old edges for touched srcs.
@@ -95,6 +106,11 @@ def resolve_staged_links(indexer, report) -> None:
 
     if not indexer._staged_links:
         indexer.store.commit()
+        # Even with nothing staged, a new node may have landed that
+        # promotes a previously-dangling edge (the common case:
+        # paper B was imported, A pointed at it dangling, A's
+        # mtime didn't advance so its refs weren't re-staged).
+        _promote_dangling_edges(indexer, report)
         return
 
     # 2. Lookup maps. For each node type we just need "does X
@@ -170,6 +186,147 @@ def resolve_staged_links(indexer, report) -> None:
     # Clear state so another index_all() call starts fresh.
     indexer._staged_links = []
     indexer._touched_srcs = set()
+
+    # Dangling-promotion pass using the same lookup maps we just
+    # built. Cheap: one SELECT + per-row set lookup.
+    _promote_dangling_edges(
+        indexer, report,
+        paper_keys=paper_keys, note_keys=note_keys,
+        topic_slugs=topic_slugs, thought_slugs=thought_slugs,
+        citation_to_paper=citation_to_paper,
+    )
+
+
+def _promote_dangling_edges(
+    indexer, report,
+    *,
+    paper_keys: set[str] | None = None,
+    note_keys: set[str] | None = None,
+    topic_slugs: set[str] | None = None,
+    thought_slugs: set[str] | None = None,
+    citation_to_paper: dict[str, str] | None = None,
+) -> None:
+    """Scan the links table for rows with dst_type='dangling' and
+    re-resolve each against the current node tables. Promote in-place
+    when a target now exists.
+
+    Called from two places:
+      - at the end of resolve_staged_links' main work (with the
+        already-built lookup maps passed in — no extra SELECTs), and
+      - from the early-return branch when nothing was staged (builds
+        its own maps; typical "idle re-index" path).
+
+    No-op when there are no dangling edges.
+    """
+    # Cheap cardinality probe before doing real work.
+    n_dangling = indexer.store.execute(
+        "SELECT COUNT(*) FROM links WHERE dst_type = 'dangling'"
+    ).fetchone()[0]
+    if n_dangling == 0:
+        return
+
+    # Build lookup maps only if the caller didn't pass them in.
+    if paper_keys is None:
+        paper_keys = {r["paper_key"] for r in indexer.store.execute(
+            "SELECT paper_key FROM papers"
+        ).fetchall()}
+    if note_keys is None:
+        note_keys = {r["zotero_key"] for r in indexer.store.execute(
+            "SELECT zotero_key FROM notes"
+        ).fetchall()}
+    if topic_slugs is None:
+        topic_slugs = {r["slug"] for r in indexer.store.execute(
+            "SELECT slug FROM topics"
+        ).fetchall()}
+    if thought_slugs is None:
+        thought_slugs = {r["slug"] for r in indexer.store.execute(
+            "SELECT slug FROM thoughts"
+        ).fetchall()}
+    if citation_to_paper is None:
+        citation_to_paper = {
+            r["citation_key"]: r["paper_key"]
+            for r in indexer.store.execute(
+                "SELECT citation_key, paper_key FROM papers "
+                "WHERE citation_key IS NOT NULL AND citation_key != '' "
+                "AND paper_key = zotero_key"
+            ).fetchall()
+        }
+
+    # Pull dangling rows. Small table (dangling edges should be the
+    # exception, not the rule) so we load fully.
+    rows = list(indexer.store.execute(
+        "SELECT src_type, src_key, dst_key, origin FROM links "
+        "WHERE dst_type = 'dangling'"
+    ).fetchall())
+
+    promoted = 0
+    # Process in batches: each row either resolves (UPDATE) or stays
+    # dangling (no-op). We DELETE the old row then INSERT the new
+    # one because links's PK includes dst_type — UPDATE dst_type
+    # would violate the old PK. Use INSERT OR IGNORE for safety in
+    # case the promoted edge already exists (race with a concurrent
+    # run? defense in depth).
+    for row in rows:
+        src_type, src_key, dst_key, origin = (
+            row["src_type"], row["src_key"], row["dst_key"], row["origin"]
+        )
+        new_dst_type: str | None = None
+
+        if origin == "cite":
+            # @cite always resolves via citation_key.
+            resolved = citation_to_paper.get(dst_key)
+            if resolved is not None:
+                new_dst_type = "paper"
+                dst_key = resolved
+        else:
+            # Try each node type in order of likelihood.
+            # Note: we have no hint_type stored for dangling rows,
+            # so this matches _resolve_one's no-hint branch.
+            if dst_key in paper_keys:
+                new_dst_type = "paper"
+            elif dst_key in topic_slugs:
+                new_dst_type = "topic"
+            elif dst_key in thought_slugs:
+                new_dst_type = "thought"
+            elif dst_key in note_keys:
+                new_dst_type = "note"
+
+        if new_dst_type is None:
+            continue  # still dangling
+
+        # Replace the old (dangling) row with the promoted one.
+        indexer.store.execute(
+            "DELETE FROM links "
+            "WHERE src_type = ? AND src_key = ? "
+            "AND dst_type = 'dangling' AND dst_key = ? AND origin = ?",
+            (src_type, src_key, row["dst_key"], origin),
+        )
+        indexer.store.execute(
+            "INSERT OR IGNORE INTO links "
+            "(src_type, src_key, dst_type, dst_key, origin) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (src_type, src_key, new_dst_type, dst_key, origin),
+        )
+        promoted += 1
+
+    if promoted:
+        indexer.store.commit()
+        log.info("Promoted %d dangling edge(s) to real targets.", promoted)
+        # Report surface: subtract from dangling count if the field
+        # exists. It's OK if the caller already set links_dangling;
+        # we just reduce it by the count we just promoted.
+        try:
+            report.links_dangling = max(
+                0, (report.links_dangling or 0) - promoted,
+            )
+        except AttributeError:
+            pass
+        # Also expose the promotion count for operators who want to
+        # see it in the index summary.
+        try:
+            report.links_promoted = promoted
+        except AttributeError:
+            pass
 
 
 def _resolve_one(

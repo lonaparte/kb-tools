@@ -43,7 +43,7 @@ def safe_resolve(kb_root: Path, rel: str) -> Path:
       - Backslashes normalised to forward slashes before resolve.
       - Escape via `..` or symlink caught at the relative_to() step.
     """
-    if not rel:
+    if not rel or not rel.strip():
         raise PathError("empty path not allowed")
 
     # Reject absolute paths and Windows drive letters BEFORE any

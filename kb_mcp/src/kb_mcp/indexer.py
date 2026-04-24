@@ -91,6 +91,8 @@ class IndexReport:
     # Phase 2c: link-graph stats.
     links_written: int = 0          # total edges inserted this run
     links_dangling: int = 0         # edges whose dst didn't resolve
+    # v0.28.2: dangling-promotion pass (see link_resolve._promote_dangling_edges).
+    links_promoted: int = 0         # dangling edges that resolved on this run
 
     def total_changed(self) -> int:
         return self.new + self.updated + self.removed
