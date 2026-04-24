@@ -32,11 +32,18 @@ OUT_DIR="$(cd "$OUT_DIR" && pwd)"
 OUT_ZIP="$OUT_DIR/kb-tools-$VERSION.zip"
 
 # Sanity gates before we build the artefact — fail fast so we don't
-# ship a known-broken zip.
+# ship a known-broken zip. Each check is `set -e`-wired; failure of
+# any one aborts the release.
 echo "=== pre-flight checks ==="
 python3 scripts/check_package_consistency.py
 python3 scripts/check_no_secrets.py
 python3 scripts/check_no_system_paths.py
+# 0.29.3: catches the _auto_commit_single_paper class of bug — a
+# symbol used in one split-file sibling but never imported. A
+# missing cross-module import compiles (NameError only fires at
+# runtime on the specific path) so linting is the only way to
+# block it before release.
+python3 scripts/check_cross_module_imports.py
 
 # Stage into a temp dir, filter on rsync.
 STAGE="$(mktemp -d)"
