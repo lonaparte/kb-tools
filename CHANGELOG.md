@@ -5,6 +5,131 @@ All notable changes to ee-kb-tools.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is our own (calendar-ish, per-major-iteration).
 
+## [1.2.1] — 2026-04-24
+
+Merge of PR #1 (claude-code-agent robustness improvements) plus two
+rounds of review fixup. Ships stricter config validation, better
+embedding-response error handling, and four reviewer-caught
+consistency bugs around the embedding `dim` override and related
+diagnostics.
+
+### Added (from PR #1 base)
+
+- **Config-load validation for `logging.level` and
+  `embeddings.batch_size`.** Invalid values are now caught at config
+  load time with ConfigError rather than silently normalized
+  (log level) or silently passing (batch size) and failing later.
+- **API-response parse wrapping on OpenAI and Gemini embedding
+  providers.** Malformed responses surface as `EmbeddingError`
+  instead of bare `AttributeError` / `TypeError`.
+
+### Changed
+
+- **`--fulltext-provider openrouter` default model changed** from
+  `openai/gpt-4o-mini` to `openai/gpt-oss-120b:free`. The new
+  default costs $0, which matches the OpenRouter "pick any model"
+  appeal. Downside: free-tier open-weight models are meaningfully
+  less capable than paid GPT-4-class models; `--help`, the README
+  provider table, and the CHANGELOG all point this out and
+  suggest upgrade candidates (`google/gemini-2.5-flash` for cheap
+  paid, `anthropic/claude-sonnet-4.5` for quality). The old
+  default (`openai/gpt-4o-mini`) remains available as an explicit
+  override.
+
+### Changed (fixup pass 1)
+
+- **Log level validation accepts `fatal` / `warn` aliases.** Python's
+  `logging` module defines these as aliases for CRITICAL / WARNING;
+  the original PR's whitelist rejected them, which would have been a
+  regression from the pre-validation `getattr(logging, NAME.upper(),
+  INFO)` behavior. Aliases are now normalized to their canonical
+  names; the downstream code only sees the five canonical strings.
+
+- **Batch size over-limit raises `ConfigError` instead of silently
+  capping.** Silently truncating `batch_size=5000` to 2048 would
+  leave the user wondering at runtime why indexing is slower than
+  configured. A ConfigError at load time forces an explicit
+  decision: lower the config or switch provider.
+
+- **Unknown-provider batch sizes pass through unchanged.** The
+  original PR capped unknown providers to 100, which broke
+  kb-mcp.yaml's documented self-hosted endpoint use cases (Ollama /
+  vLLM / LocalAI / DashScope reached via `openai_base_url`). Those
+  gateways can handle much larger batches; we can't know their
+  limits, so the user's config is honored.
+
+- **`test_embedding_response_robustness.py` rewritten** to actually
+  exercise the production `embed()` path via client-monkeypatch.
+  The original tests ran an inline try/except in the test body, so
+  they passed whether or not the production code had the wrap — a
+  regression magnet.
+
+### Fixed (fixup pass 2 — reviewer audit on top of the PR)
+
+- **`openai` branch of `build_from_config()` now forwards
+  `cfg.embedding_dim` to `OpenAIEmbeddingProvider`.** The scaffold-
+  documented self-hosted-gateway examples (Ollama
+  `nomic-embed-text` + `dim: 768`; vLLM `BAAI/bge-large-en-v1.5` +
+  `dim: 1024`) were documented-but-not-working — `dim` was set in
+  YAML but never passed through, so `_model_dim(model)` fired on
+  the unknown name and construction failed. Now wired through.
+
+- **`embeddings.dim` strict-parsed via `_parse_positive_int`.**
+  Previously a bare `emb_cfg.get("dim")` — bool / float / zero /
+  negative / bad-string values slipped through and failed later
+  with confusing sqlite-vec errors. Now rejected at load time with
+  a clear ConfigError, matching the strictness already applied to
+  `batch_size`.
+
+- **Vector dimension mismatch now produces a helpful error** before
+  the SQLite INSERT. `run_embedding_pass` checks `len(vec) ==
+  store.vec_dim` and, on mismatch, raises ValueError naming the
+  fix: set `embeddings.dim: <old>` to restore the previous model,
+  or `kb-mcp reindex --force --dim <new>` to rebuild at the new
+  dim. Previously the user saw sqlite-vec's terse
+  "vec_f32(X) needs N bytes, got M" with no hint that the root
+  cause was a model / provider switch.
+
+- **`kb_importer/pyproject.toml` description** updated from
+  "via the Zotero local API" to "via Zotero web or local APIs".
+  Stale since the 0.28.0 flip of `source_mode` default from `live`
+  to `web`.
+
+- **Third-party dependency pins reverted to semantic minimums.**
+  Prior version-bump sweeps had accidentally dragged
+  `python-frontmatter`, `mcp`, and `openai` version pins along
+  with the ee-kb version (so 1.2.0 had `openai>=1.2.0` etc.). These
+  third-party libraries have independent release cycles and should
+  never have been coupled to the ee-kb version. Restored to their
+  originally-intended `>=1.0.0` minimums.
+
+### Added (test coverage)
+
+- `test_embedding_dim_override.py` — 4 cases locking in the scaffold-
+  documented `dim:` override path: unknown model + explicit dim
+  works, unknown model + no dim fails, known model + no dim uses
+  the built-in table, known model + override wins.
+- `test_embedding_dim_mismatch.py` — 2 cases: the error-path message
+  exercise, plus a static-code guard that the check can't be
+  silently removed.
+- `TestEmbeddingDimStrictParsing` class in
+  `test_config_validation.py` — 6 cases verifying bool / float /
+  zero / negative / bad-string all fail with ConfigError.
+- `test_config_validation.py` updated for aliases + ConfigError
+  batch-size path + unknown-provider pass-through.
+- `test_embedding_response_robustness.py` rewritten (see above).
+
+### Verification
+
+- Four lints + byte-compile on all five src trees: clean.
+- Unit tests: 457/457 (PR's base adds 14 → 1.2.0 had 425 → PR raises
+  to 439 → my fixup pass 1 adjusts to 445 → fixup pass 2 adds 12 new
+  → final 457).
+- E2E: 46/46.
+- post-install smoke: 14 pass / 2 expected skip (no OpenAI key / S2
+  rate-limited).
+- `pre_release_full_check.sh` green end-to-end including release zip.
+
 ## [1.2.0] — 2026-04-24
 
 Extends OpenRouter support from the embedding pipeline (1.1.0) to

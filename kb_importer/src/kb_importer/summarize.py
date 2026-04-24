@@ -584,11 +584,18 @@ def build_provider_from_env(
         # many upstream providers. Wire format = OpenAI, so we reuse
         # OpenAIChatProvider with an overriden base_url.
         #
-        # Default model: openai/gpt-4o-mini — cheap, fast, reliably
-        # JSON-capable (the 7-section summarizer prompt expects JSON
-        # back). Override with --fulltext-model for other catalog
-        # entries, e.g. google/gemini-2.5-flash,
-        # anthropic/claude-sonnet-4.5, deepseek/deepseek-chat.
+        # Default model: openai/gpt-oss-120b:free — free-tier catalog
+        # entry on OpenRouter (:free suffix marks it), open-weight,
+        # 120B MoE, ~5B active. No cost per call but subject to
+        # per-account free-tier quota. Capability is meaningfully
+        # below GPT-4-class models; for a full-library summarizer
+        # run you'll often want to override with something stronger
+        # (paid). --fulltext-model candidates:
+        #   google/gemini-2.5-flash      # cheap, fast, strong JSON
+        #   google/gemini-2.5-pro        # strong reasoning
+        #   anthropic/claude-sonnet-4.5  # high quality, more $
+        #   deepseek/deepseek-chat       # cheap paid baseline
+        #   openai/gpt-4o                # OpenAI's paid flagship
         #
         # Shares `OPENROUTER_API_KEY` with the kb-mcp embedding
         # provider on purpose — one key covers both domains. The
@@ -612,7 +619,7 @@ def build_provider_from_env(
         }
         return OpenAIChatProvider(
             api_key=key,
-            model=model or "openai/gpt-4o-mini",
+            model=model or "openai/gpt-oss-120b:free",
             base_url="https://openrouter.ai/api/v1",
             name="openrouter",
             extra_headers=extra_headers,

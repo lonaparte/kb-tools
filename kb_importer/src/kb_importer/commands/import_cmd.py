@@ -124,11 +124,14 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
         help="Override default model for the chosen provider. "
              "Defaults: gemini→gemini-3.1-pro-preview, "
              "openai→gpt-4o-mini, deepseek→deepseek-chat, "
-             "openrouter→openai/gpt-4o-mini. "
+             "openrouter→openai/gpt-oss-120b:free (free-tier "
+             "open-weight; capability may lag paid models — override "
+             "for important libraries). "
              "For cheaper gemini runs, try gemini-3-flash-preview "
-             "or gemini-3.1-flash-lite. OpenRouter examples: "
-             "openai/gpt-4o, google/gemini-2.5-flash, "
-             "anthropic/claude-sonnet-4.5, deepseek/deepseek-chat.",
+             "or gemini-3.1-flash-lite. OpenRouter upgrade examples: "
+             "google/gemini-2.5-flash (cheap paid), "
+             "anthropic/claude-sonnet-4.5 (high quality), "
+             "openai/gpt-4o (OpenAI flagship).",
     )
     p.add_argument(
         "--fulltext-fallback-model", default="gemini-2.5-pro",

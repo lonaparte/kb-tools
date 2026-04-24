@@ -22,7 +22,10 @@ def test_openrouter_accepted_as_provider(monkeypatch):
     prov = build_provider_from_env("openrouter")
     assert isinstance(prov, OpenAIChatProvider)
     assert prov.name == "openrouter"
-    assert prov.model == "openai/gpt-4o-mini"  # default
+    # 1.2.1 default: free-tier open-weight model on OpenRouter.
+    # Capability may lag paid models; users should override via
+    # --fulltext-model for important libraries.
+    assert prov.model == "openai/gpt-oss-120b:free"
 
 
 def test_openrouter_respects_explicit_model(monkeypatch):
