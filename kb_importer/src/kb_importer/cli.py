@@ -11,6 +11,7 @@ from .commands import (
     import_cmd,
     list_cmd,
     orphans_cmd,
+    preflight_cmd,
     status_cmd,
     summary_cmd,
     sync_cmd,
@@ -89,6 +90,7 @@ def build_parser() -> argparse.ArgumentParser:
     summary_cmd.add_set_summary_parser(subparsers)
     summary_cmd.add_import_summaries_parser(subparsers)
     summary_cmd.add_show_template_parser(subparsers)
+    preflight_cmd.add_parser(subparsers)
 
     return parser
 
@@ -108,6 +110,17 @@ def main(argv: list[str] | None = None) -> int:
     if legacy_mirror and not args.zotero_storage_dir:
         import os
         os.environ["KB_ZOTERO_MIRROR"] = str(legacy_mirror)
+
+    # preflight is a diagnostic command that pings the LLM provider;
+    # it shouldn't require a fully-configured Zotero workspace.
+    # Dispatch directly with a minimal cfg shim — this lets a user
+    # run `kb-importer preflight --fulltext-provider openrouter`
+    # before they've set up library_id / zotero_storage.
+    if args.command == "preflight":
+        # preflight_cmd never touches cfg.kb_root / cfg.zotero_*;
+        # it only uses the command's own args. Passing None is
+        # acceptable and keeps type-checkers happy at the call site.
+        return args.func(args, None)
 
     # Load config; CLI args override env vars which override file.
     try:

@@ -153,6 +153,18 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
              "(the way v22 and earlier behaved).",
     )
     p.add_argument(
+        "--max-consecutive-failures", type=int, default=5,
+        help=(
+            "Circuit breaker: stop the fulltext batch after N "
+            "consecutive breaker-relevant LLM failures (bad_request "
+            "/ llm_other / other). Prevents flaky providers or "
+            "misconfigured models from burning budget on 1000 "
+            "papers. Set to 0 to disable. Default 5. Unaffected by "
+            "pdf_missing / pdf_unreadable / already_processed / "
+            "quota_exhausted (those have their own handling)."
+        ),
+    )
+    p.add_argument(
         "--fulltext-max-tokens", type=_positive_int, default=8000,
         help="Max output tokens per summary request (default 8000). "
              "Gemini 2.5/3.x models consume part of this as thinking "

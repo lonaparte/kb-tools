@@ -208,6 +208,16 @@ def register_re_read(sub) -> None:
         "--judge-model", default=None,
         help="[merge mode only] Model override for the judge LLM.",
     )
+    p.add_argument(
+        "--max-consecutive-failures", type=int, default=5,
+        help=(
+            "Circuit breaker: stop the re-read batch after N "
+            "consecutive provider-health LLM failures (bad_request "
+            "/ llm_other / quota). Success clears the streak. Set "
+            "to 0 to disable. Default 5. pdf_missing / bad_target / "
+            "mtime_conflict are per-paper issues and never count."
+        ),
+    )
     p.set_defaults(func=_cmd_re_read)
 
 
@@ -305,6 +315,7 @@ def _cmd_re_read(args, ctx):
             mode=args.mode,
             judge_provider=args.judge_provider,
             judge_model=args.judge_model,
+            max_consecutive_failures=args.max_consecutive_failures,
         )
     except ValueError as e:
         print(f"error: {e}", file=sys.stderr)

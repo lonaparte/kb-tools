@@ -9,9 +9,69 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from collections import deque
 
 from ..config import Config
 from ..zotero_reader import ZoteroReader
+
+
+# 1.4.0: circuit breaker for batch LLM loops.
+#
+# Motivation: pre-1.4, a flaky provider (e.g. temporary region
+# outage, a misconfigured model that 400s on every request, a
+# provider that silently returns empty JSON) would walk through
+# 1000 papers, each one burning API budget + batch time, before
+# the user noticed. Fallback-model activation already covers one
+# class of this (model-specific errors) but generic llm_other
+# failures don't trigger it.
+#
+# Design: the last N error codes form a sliding window. If the
+# window fills up with the same breaker-relevant code, stop the
+# rest of the batch with a clear message. Success resets the
+# window (one good paper = provider is alive; any earlier streak
+# was transient). pdf_missing / pdf_unreadable / already_processed
+# are local to one paper — they don't enter the window at all.
+# quota_exhausted has its own fallback-state handling, also skipped.
+#
+# Breaker default: trips after 5 consecutive breaker-relevant
+# failures. Configurable via --max-consecutive-failures (0 disables).
+
+CIRCUIT_BREAKER_WINDOW_DEFAULT = 5
+
+
+class _CircuitBreaker:
+    """Sliding-window counter for consecutive breaker-relevant
+    failures. See module comment for rationale."""
+
+    def __init__(self, window: int, relevant_codes: set[str]):
+        self._window = window
+        self._relevant = relevant_codes
+        self._recent: deque[str] = deque(maxlen=window)
+        self.tripped_on: str | None = None
+
+    @property
+    def enabled(self) -> bool:
+        return self._window > 0
+
+    def record_failure(self, code: str) -> bool:
+        """Record a failure code. Return True if the breaker has just
+        tripped (window full AND all codes identical)."""
+        if not self.enabled or code not in self._relevant:
+            return False
+        self._recent.append(code)
+        if (
+            len(self._recent) == self._window
+            and len(set(self._recent)) == 1
+        ):
+            self.tripped_on = self._recent[0]
+            return True
+        return False
+
+    def record_success(self) -> None:
+        """One successful paper — assume the provider is healthy and
+        clear the streak. Pre-existing transient errors shouldn't
+        count against future flakiness checks."""
+        self._recent.clear()
 # 0.29.3: _auto_commit_single_paper was moved to import_pipeline in
 # the 0.28.0 G-split (kb-importer: split 1505-line import_cmd.py
 # into per-phase modules) but this file's two call sites never got
@@ -134,6 +194,25 @@ def _run_fulltext_pass(
         # try to switch to the fallback model once (same as quota).
         "bad_request_models": set(),
     }
+
+    # 1.4.0: circuit breaker. Imported here (not at module top) so
+    # REASON_* constants stay colocated with their single other use
+    # site inside this same function.
+    from ..events import (
+        REASON_LLM_BAD_REQUEST, REASON_LLM_OTHER, REASON_OTHER,
+    )
+    _breaker_window = getattr(
+        args, "max_consecutive_failures",
+        CIRCUIT_BREAKER_WINDOW_DEFAULT,
+    )
+    breaker = _CircuitBreaker(
+        window=_breaker_window,
+        relevant_codes={
+            REASON_LLM_BAD_REQUEST,
+            REASON_LLM_OTHER,
+            REASON_OTHER,
+        },
+    )
 
     def _try_fallback_after_quota(
         err: QuotaExhaustedError, key: str,
@@ -542,6 +621,39 @@ def _run_fulltext_pass(
                     file=sys.stderr,
                 )
                 break
+            # 1.4.0: circuit breaker — record this failure's code and
+            # stop the pipeline if the streak of consecutive
+            # breaker-relevant failures has reached the threshold.
+            # `cat` is set in the SummarizerError branch; the
+            # QuotaExhaustedError branch doesn't touch it (quota isn't
+            # breaker-relevant), and the catch-all `else` sets it to
+            # REASON_OTHER. `last_err` always categorizes above.
+            _breaker_cat = (
+                REASON_LLM_BAD_REQUEST
+                if isinstance(last_err, BadRequestError) else
+                REASON_LLM_OTHER
+                if isinstance(last_err, SummarizerError) and not
+                    isinstance(last_err, QuotaExhaustedError) else
+                REASON_OTHER
+                if not isinstance(last_err, QuotaExhaustedError) else
+                None
+            )
+            if _breaker_cat and breaker.record_failure(_breaker_cat):
+                print(
+                    f"\nFulltext short pipeline: circuit breaker "
+                    f"tripped after {breaker._window} consecutive "
+                    f"{_breaker_cat!r} failures. This usually means "
+                    f"the provider / model is unhealthy (wrong key, "
+                    f"deprecated model, regional outage, malformed "
+                    f"prompts). Aborting the remaining "
+                    f"{len(short_keys) - short_keys.index(key) - 1} "
+                    f"papers to save budget. Completed {llm_ok}, "
+                    f"failed {llm_fail}. Investigate and re-run "
+                    f"`kb-importer import papers --all-unprocessed "
+                    f"--fulltext` to resume.",
+                    file=sys.stderr,
+                )
+                break
             continue
 
         try:
@@ -558,6 +670,11 @@ def _run_fulltext_pass(
             llm_fail += 1
             continue
 
+        # One successful paper — clear any earlier failure streak. A
+        # provider that wrote one paper is alive; any transient errors
+        # that preceded this success shouldn't count toward future
+        # circuit-breaker trips.
+        breaker.record_success()
         llm_ok += 1
         source_counts[result.source] = source_counts.get(result.source, 0) + 1
         total_prompt_tokens += summary.prompt_tokens
@@ -753,6 +870,28 @@ def _run_fulltext_pass(
                         file=sys.stderr,
                     )
                     break
+                # 1.4.0: circuit breaker in the long pipeline. Codes:
+                # longform LongformError → REASON_LONGFORM_FAILURE
+                # (NOT breaker-relevant — it's often per-book
+                # chapter-detection bugs, not provider health); so
+                # only REASON_OTHER (unexpected) counts here.
+                _breaker_cat = (
+                    REASON_OTHER
+                    if not isinstance(last_err, (QuotaExhaustedError,
+                                                 LongformError))
+                    else None
+                )
+                if _breaker_cat and breaker.record_failure(_breaker_cat):
+                    print(
+                        f"\nFulltext long pipeline: circuit breaker "
+                        f"tripped after {breaker._window} consecutive "
+                        f"{_breaker_cat!r} failures. Aborting "
+                        f"remaining books to save budget. Completed "
+                        f"{llm_ok}, failed {llm_fail}. Investigate "
+                        f"and re-run to resume.",
+                        file=sys.stderr,
+                    )
+                    break
                 continue
 
             if args.longform_dryrun:
@@ -782,6 +921,8 @@ def _run_fulltext_pass(
                 )
                 continue
 
+            # One successful longform paper — clear breaker streak.
+            breaker.record_success()
             llm_ok += 1
             source_counts[result.source] = (
                 source_counts.get(result.source, 0) + 1

@@ -5,6 +5,91 @@ All notable changes to ee-kb-tools.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is our own (calendar-ish, per-major-iteration).
 
+## [1.4.0] — 2026-04-24
+
+Minor release. Closes the three LLM-unavailable robustness items
+that 1.3.1 deliberately deferred:
+
+1. Circuit breaker for batch LLM loops.
+2. `kb-importer preflight` subcommand.
+3. Non-Gemini quota classification.
+
+After 1.4.0 the toolchain's behavior against a flaky / misconfigured
+/ regionally-down LLM provider is: per-call retry (1.3.1) →
+fallback-model switch (existing, Gemini-only) → batch-level circuit
+breaker (new) → `events.jsonl` classification (existing) →
+continue-to-next-paper. Nothing surprising should reach
+"silently burns budget across 1000 papers".
+
+### Added
+
+- **`kb-importer preflight` subcommand.** Sends a single
+  ~5-token request to the configured fulltext provider / model
+  to verify key + endpoint + model work BEFORE a real import
+  spends real tokens. Safe to run unlimited times. Structured
+  exit codes: 0 ok, 2 key missing, 3 quota, 4 bad request, 5
+  other LLM error. Bypasses `load_config()` — doesn't require
+  library_id / zotero_storage to be set (you can preflight
+  before your Zotero setup is complete).
+
+- **Circuit breaker in batch fulltext + re-read loops.** Tracks
+  the last N error codes in a sliding window; trips if all N
+  are the same breaker-relevant code (`llm_bad_request`,
+  `llm_other`, `other`). Success resets the streak. Local
+  per-paper issues (`pdf_missing`, `pdf_unreadable`,
+  `already_processed`, `bad_target`, `mtime_conflict`,
+  `quota_exhausted`) NEVER trip it — those have their own
+  dispositions. Configurable via `--max-consecutive-failures N`
+  (default 5; 0 disables). Available on `kb-importer import`
+  and `kb-write re-read`.
+
+- **Non-Gemini quota classification.** OpenAI / DeepSeek /
+  OpenRouter HTTP 429 + HTTP 402 (insufficient_quota) now raise
+  `QuotaExhaustedError` with classified `quota_type` and parsed
+  `retry_after`, matching the Gemini path's contract.
+  `_classify_quota_kind()` recognizes OpenAI error types
+  (`insufficient_quota` → daily, `rate_limit_exceeded` → rate)
+  in addition to the Gemini English phrasings.
+  `_extract_retry_after()` prefers the HTTP `Retry-After`
+  header, falls back to body-text parsing for both Gemini's
+  `retryDelay: "34s"` and OpenAI's `Please try again in 20ms`
+  shapes (ms→s conversion included).
+
+- **HTTP 404 on OpenAI-compatible chat** now routes through
+  `BadRequestError` (was generic `SummarizerError` before). 404
+  on a chat completion means model-name is wrong or endpoint
+  doesn't exist — deterministic, never retry. Matches Gemini
+  provider's 404 handling.
+
+### Test coverage
+
+- `test_circuit_breaker.py` — 7 cases covering disabled mode,
+  mixed-code non-trip, success-resets-streak, irrelevant-code
+  ignored, window-of-1 trips immediately, tripped state is sticky.
+- `test_quota_classification.py` — 11 cases covering all classifier
+  shapes (OpenAI insufficient_quota, rate_limit_exceeded, Gemini
+  English, unknown), retry_after header-vs-body priority, OpenAI
+  `ms` / `s` shapes, and end-to-end OpenAIChatProvider 429 / 402
+  / 404 routing.
+- `test_preflight_cmd.py` — 4 cases covering missing-key exit 2,
+  happy path exit 0, quota exit 3, bad-request exit 4.
+
+### Verification
+
+- Four lints + byte-compile clean across all 5 src/ trees.
+- **520/520 unit tests** (was 497 in 1.3.1; +23 from the three
+  new test files: 7 breaker, 11 quota, 4 preflight; plus 1
+  small adjustment in the existing chat retry test for the
+  new 404 branch).
+- 46/46 e2e.
+- post-install smoke: 14 pass / 2 expected skip.
+- `pre_release_full_check.sh` green end-to-end.
+- Release zip kb-tools-1.4.0.zip.
+- Fresh-venv pip-wheel install: `kb-importer preflight --help`
+  lists the new subcommand; `kb-write re-read --help` shows
+  `--max-consecutive-failures`; `kb-importer import papers
+  --help` shows same flag.
+
 ## [1.3.1] — 2026-04-24
 
 Robustness polish. Two reviewer-caught gaps in config parsing and

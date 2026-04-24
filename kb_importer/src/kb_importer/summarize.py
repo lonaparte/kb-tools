@@ -331,6 +331,29 @@ class OpenAIChatProvider:
                     raise BadRequestError(
                         f"{self.name} HTTP 400: {detail or e.reason}"
                     ) from e
+                # 404: model-not-found or endpoint typo. No retry — same
+                # request will always fail. Route through BadRequestError
+                # so batch scheduler treats it as permanent (mirrors the
+                # Gemini provider's 404 branch).
+                if e.code == 404:
+                    raise BadRequestError(
+                        f"{self.name} HTTP 404: {detail or e.reason}"
+                    ) from e
+                # 429 / 402 (insufficient quota): classify as quota
+                # exhaustion so the batch scheduler's fallback_state
+                # can react (same exception type Gemini uses). 1.4.0:
+                # previously this hit the generic 5xx retry path,
+                # wasting budget on a problem retries can't fix.
+                if e.code in (429, 402):
+                    quota_type = _classify_quota_kind(detail)
+                    retry_after = _extract_retry_after(e, detail)
+                    raise QuotaExhaustedError(
+                        f"{self.name} quota exhausted ({quota_type}, "
+                        f"model={self.model}): {detail or e.reason}",
+                        quota_type=quota_type,
+                        retry_after=retry_after,
+                        model=self.model,
+                    ) from e
                 # 5xx: server-side transient; retry if budget left.
                 if _should_retry_http(e) and attempt < _DEFAULT_RETRIES:
                     log.warning(
@@ -394,19 +417,30 @@ class OpenAIChatProvider:
 
 
 def _classify_quota_kind(detail: str) -> str:
-    """Given the error body text from Gemini, guess whether the quota
-    is per-day (RPD, resets at midnight UTC → switch model) or
-    per-minute (RPM, resets in seconds → sleep+retry same model).
+    """Given the error body text from any provider, guess whether
+    the quota is per-day (RPD — resets at midnight UTC → switch
+    model) or per-minute (RPM — resets in seconds → sleep+retry
+    same model).
 
-    Gemini's 429 body text is descriptive English like:
-      "Quota exceeded for generate_requests_per_model_per_day,
-       limit: 250"
-    or
-      "Resource has been exhausted (e.g. check quota)."
-    We do simple substring matching. Unknown → "unknown" (caller
-    will treat conservatively as daily to avoid hot-looping).
+    Shapes we recognize:
+      - Gemini English prose: "per_day", "daily", "rpd"; "per_minute",
+        "rpm".
+      - OpenAI error types: "insufficient_quota" → billing-level
+        exhaustion (we return "daily" because it's not a per-minute
+        reset); "rate_limit_exceeded" → per-minute retry.
+      - DeepSeek / OpenRouter: OpenAI-shape or plain English "rate
+        limit".
+
+    Unknown → "unknown" (caller treats conservatively as daily to
+    avoid hot-looping on a quota reset that might take hours).
     """
     s = detail.lower()
+    # OpenAI error.type discriminators take priority — they're
+    # structured, not substring-matched English.
+    if "insufficient_quota" in s:
+        return "daily"
+    if "rate_limit_exceeded" in s or "rate_limit" in s:
+        return "rate"
     if "per_day" in s or "per day" in s or "daily" in s or "rpd" in s:
         return "daily"
     if "per_minute" in s or "per minute" in s or "rpm" in s:
@@ -415,19 +449,22 @@ def _classify_quota_kind(detail: str) -> str:
 
 
 def _extract_retry_delay(detail: str) -> float | None:
-    """Try to parse the retry-after hint Gemini puts in the 429 body,
-    e.g. "Please retry in 34.2s" or "retryDelay: 12s". Returns seconds
-    as float, or None if we can't find one. Caller uses this to sleep
+    """Try to parse the retry-after hint from the 429 response body.
+
+    Handles Gemini's English phrasing ("Please retry in 34.2s",
+    `retryDelay: "34s"`) and OpenAI's structured form (`"Please try
+    again in 20s"` inside the error message). Returns seconds as
+    float, or None if we can't find one. Caller uses this to sleep
     before retrying — not authoritative, just a hint.
     """
-    # "Please retry in 34.2s"
+    # Gemini: "Please retry in 34.2s"
     m = re.search(r"retry in ([0-9.]+)\s*s", detail, flags=re.IGNORECASE)
     if m:
         try:
             return float(m.group(1))
         except ValueError:
             pass
-    # "retryDelay": "34s"
+    # Gemini: "retryDelay": "34s"
     m = re.search(r'retryDelay["\s:]+["\']([0-9.]+)s', detail,
                   flags=re.IGNORECASE)
     if m:
@@ -435,7 +472,41 @@ def _extract_retry_delay(detail: str) -> float | None:
             return float(m.group(1))
         except ValueError:
             pass
+    # OpenAI-style: "Please try again in 20ms." or "Please try again
+    # in 20s." OpenAI emits ms for sub-second rate limits; convert.
+    m = re.search(r"try again in ([0-9.]+)\s*(ms|s)", detail,
+                  flags=re.IGNORECASE)
+    if m:
+        try:
+            v = float(m.group(1))
+            return v / 1000.0 if m.group(2).lower() == "ms" else v
+        except ValueError:
+            pass
     return None
+
+
+def _extract_retry_after(err: "urllib.error.HTTPError",
+                        body: str) -> float | None:
+    """Prefer the HTTP `Retry-After` header (per RFC 7231 / RFC 9110)
+    over body-text parsing. Returns seconds as float, or None.
+
+    Header value is either integer seconds or an HTTP-date; we only
+    handle the integer form (what OpenAI / OpenRouter / Gemini all
+    actually send). HTTP-date would require parsing for a marginal
+    gain — skip.
+    """
+    try:
+        headers = getattr(err, "headers", None)
+        if headers is not None:
+            h = headers.get("Retry-After") or headers.get("retry-after")
+            if h:
+                try:
+                    return float(h.strip())
+                except (TypeError, ValueError):
+                    pass
+    except Exception:
+        pass
+    return _extract_retry_delay(body)
 
 
 class GeminiProvider:
@@ -553,7 +624,7 @@ class GeminiProvider:
                 # because daily → switch model, per-minute → sleep+retry.
                 if e.code == 429 or "RESOURCE_EXHAUSTED" in detail:
                     quota_type = _classify_quota_kind(detail)
-                    retry_after = _extract_retry_delay(detail)
+                    retry_after = _extract_retry_after(e, detail)
                     raise QuotaExhaustedError(
                         f"gemini quota exhausted ({quota_type}, "
                         f"model={self.model}): {detail or 'HTTP 429'}",

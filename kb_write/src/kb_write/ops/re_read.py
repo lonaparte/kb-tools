@@ -29,6 +29,8 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from collections import deque
+
 from kb_core import SECTION_COUNT
 
 from ..config import WriteContext
@@ -69,6 +71,7 @@ def re_read(
     mode: str = "append",
     judge_provider: str | None = None,
     judge_model: str | None = None,
+    max_consecutive_failures: int = 5,
 ) -> ReReadReport:
     """Entry point. See module docstring for semantics.
 
@@ -176,6 +179,14 @@ def re_read(
     # --- real runs ---
     from .re_summarize import re_summarize, ReSummarizeError
 
+    # 1.4.0: circuit breaker. re-read calls re_summarize per paper;
+    # if N consecutive calls fail with the same LLM-health code
+    # (not pdf_missing / bad_target / mtime_conflict — those are
+    # local per-paper issues), stop the batch. Success clears the
+    # streak. Set max_consecutive_failures=0 to disable.
+    _breaker_codes = {"bad_request", "llm_other", "quota"}
+    _breaker_recent: deque[str] = deque(maxlen=max_consecutive_failures)
+
     for k in chosen:
         try:
             rs_report = re_summarize(
@@ -216,6 +227,8 @@ def re_read(
                 + (f"  [{rs_report.git_sha[:8]}]" if rs_report.git_sha else ""),
                 file=sys.stderr,
             )
+            # Success resets the breaker streak.
+            _breaker_recent.clear()
         except ReSummarizeError as e:
             # Classify into a RE_READ_* category.
             #
@@ -302,6 +315,29 @@ def re_read(
                     },
                 )
             print(f"  ✗ {k}  skipped: {msg}", file=sys.stderr)
+            # Circuit breaker: record if this is a provider-health
+            # code (not per-paper). pdf_missing / bad_target /
+            # mtime_conflict / not_processed = local issues;
+            # bad_request / llm_other / quota = provider health.
+            if (
+                max_consecutive_failures > 0
+                and code in _breaker_codes
+            ):
+                _breaker_recent.append(code)
+                if (
+                    len(_breaker_recent) == max_consecutive_failures
+                    and len(set(_breaker_recent)) == 1
+                ):
+                    print(
+                        f"\nre-read: circuit breaker tripped after "
+                        f"{max_consecutive_failures} consecutive "
+                        f"{code!r} failures. Aborting remaining "
+                        f"{len(chosen) - chosen.index(k) - 1} papers "
+                        f"to save API budget. Investigate the "
+                        f"provider / model configuration and re-run.",
+                        file=sys.stderr,
+                    )
+                    break
         except Exception as e:
             # Unexpected — log but don't crash the batch. Leaving N-1
             # papers un-processed because of one infra hiccup on paper
