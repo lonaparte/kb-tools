@@ -69,26 +69,24 @@ def find_workspace_config() -> Path | None:
     `<parent>/.ee-kb-tools/config/kb-citations.yaml`. Returns the
     Path if it exists, else None.
 
-    v0.29.4: fall back to CWD-based walk-up when the code-install
-    path (_find_tools_dir) fails. Pip-installed wheels live in
-    site-packages, far from any user workspace — autodetect needs
-    to also ask "is CWD inside a workspace?" to be useful in that
-    scenario. Same pattern + rationale as
-    kb_importer.config._find_workspace_config.
+    CWD-first, install-location fallback. 0.29.5 re-ordered this
+    (0.29.4 tried install first and fell back to CWD) so that an
+    editable install in one workspace doesn't steal the config
+    from a user whose CWD points to a different workspace.
     """
     from kb_core.workspace import find_workspace_root, TOOLS_DIR_NAME
 
-    # (1) code-install-based.
-    tools = _find_tools_dir()
-    if tools is not None:
-        candidate = tools / "config" / "kb-citations.yaml"
-        if candidate.exists():
-            return candidate
-
-    # (2) CWD-based walk-up.
+    # (1) CWD-based walk-up — authoritative.
     ws = find_workspace_root()
     if ws is not None:
         candidate = ws / TOOLS_DIR_NAME / "config" / "kb-citations.yaml"
+        if candidate.exists():
+            return candidate
+
+    # (2) code-install-based — deploy.sh compatibility.
+    tools = _find_tools_dir()
+    if tools is not None:
+        candidate = tools / "config" / "kb-citations.yaml"
         if candidate.exists():
             return candidate
 
@@ -99,26 +97,31 @@ def kb_root_from_env(explicit: Path | None = None) -> Path:
     """Resolve kb_root. Precedence: explicit > $KB_ROOT > workspace
     autodetect (sibling `ee-kb/` of `.ee-kb-tools/`). Never reads
     system paths.
+
+    Autodetect order: CWD-based walk first, then install-location
+    fallback. Same rationale as `find_workspace_config` above.
     """
     if explicit is not None:
         return Path(explicit).expanduser().resolve()
     env = os.environ.get("KB_ROOT")
     if env:
         return Path(env).expanduser().resolve()
-    # Workspace autodetect. 0.29.4: same two-step pattern as
-    # find_workspace_config — code-install first, CWD-based
-    # fallback for pip-wheel installs.
     from kb_core.workspace import find_workspace_root
-    tools = _find_tools_dir()
-    if tools is not None:
-        candidate = tools.parent / "ee-kb"
-        if candidate.exists():
-            return candidate.resolve()
+
+    # (1) CWD-based — authoritative.
     ws = find_workspace_root()
     if ws is not None:
         candidate = ws / "ee-kb"
         if candidate.exists():
             return candidate.resolve()
+
+    # (2) install-location — deploy.sh compatibility.
+    tools = _find_tools_dir()
+    if tools is not None:
+        candidate = tools.parent / "ee-kb"
+        if candidate.exists():
+            return candidate.resolve()
+
     raise ValueError(
         "kb_root not set. Provide via --kb-root, $KB_ROOT env var, "
         "or use the canonical workspace layout (.ee-kb-tools/ + "

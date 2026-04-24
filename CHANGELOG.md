@@ -5,6 +5,53 @@ All notable changes to ee-kb-tools.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is our own (calendar-ish, per-major-iteration).
 
+## [0.29.6] — 2026-04-24
+
+Finishes the 0.29.5 workspace-autodetect tidy-up, plus adds a
+user-facing upgrade guide that had been missing.
+
+### Fixed
+
+- **Unified CWD-first ordering across all three workspace
+  autodetect sites.** 0.29.4 and 0.29.5 fixed individual sites
+  one at a time; the pattern hadn't been applied uniformly.
+  `kb_importer._find_workspace_config` and
+  `kb_citations.find_workspace_config` / `kb_root_from_env`
+  previously tried install-location first and CWD second. Under
+  an editable install, this resolved to the *dev* workspace's
+  config regardless of where the user had cd'd. Re-ordered all
+  three to CWD-first, install-location as compatibility
+  fallback — matches the pattern already in
+  `kb_importer.config.load_config()` step 4b.
+
+  Practical effect: a developer running editable-installed
+  kb-tools from `~/dev/` can now `cd ~/work-project/ee-kb &&
+  kb-importer status` and it resolves the work-project
+  workspace, not their own dev one.
+
+### Added
+
+- **`UPGRADING.md`** — explicit version-bump procedure for
+  existing workspaces. Covers: pattern A (`.ee-kb-tools/` as
+  its own git clone) and pattern B (deploy.sh re-run) upgrade
+  paths, pre-upgrade snapshot procedure, schema-bump handling
+  (auto-drop + rebuild on ensure_schema mismatch), config
+  migrations (DeprecationWarning for renamed keys, additive
+  rescaffolds), validation checklist, rollback flow (including
+  `snapshot import --force` for schema downgrade), and the
+  common upgrade-time errors mapped back to their CHANGELOG
+  entries. Linked from README's introduction alongside
+  DEPLOYMENT.md.
+
+### Verification
+
+- All four lints clean.
+- 404/404 unit tests pass.
+- Editable-install empirical test: `cd /tmp/ws/ee-kb` (workspace
+  A) with editable install from `/home/llm-agent/...` (workspace
+  B) now resolves `_find_workspace_config` / `find_workspace_config`
+  / `kb_root_from_env` all to workspace A.
+
 ## [0.29.5] — 2026-04-24
 
 Finishes the 0.29.4 workspace-autodetect fix. A second audit caught

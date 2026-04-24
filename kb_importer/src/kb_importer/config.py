@@ -66,26 +66,25 @@ def _find_workspace_config() -> Path | None:
     """Locate `kb-importer.yaml` in the canonical
     `<parent>/.ee-kb-tools/config/` location.
 
-    v0.29.4: now tries TWO autodetect paths, in order:
+    Two autodetect paths tried in order. CWD wins when both
+    resolve:
 
-      1. `find_tools_dir()` — walks up from this module's install
-         location looking for `.ee-kb-tools`. Works when the code
-         is deployed inside `.ee-kb-tools/kb_importer/...` (the
-         `scripts/deploy.sh` layout). Returns None for any other
-         install location (site-packages, editable-install from
-         ~/dev/, etc).
+      1. `find_workspace_root()` — walks up from CWD looking for
+         a dir that contains `.ee-kb-tools/` (or `ee-kb/`). The
+         user's CWD authoritatively names the workspace; run the
+         same tool in two different workspaces and it resolves
+         the right config each time.
 
-      2. `find_workspace_root()` — walks up from CWD looking for
-         a dir that contains `.ee-kb-tools/` (or `ee-kb/`). This
-         is the user-facing path: `cd workspace/ee-kb && kb-importer
-         status` resolves its config even when the code is in a
-         site-packages wheel install far from the workspace.
+      2. `find_tools_dir()` — walks up from this module's install
+         location looking for `.ee-kb-tools/`. Compatibility
+         fallback for `scripts/deploy.sh` layouts where the venv
+         lives inside `.ee-kb-tools/.venv/` and the user invokes
+         the tool from outside any workspace.
 
-    Pre-0.29.4, only (1) ran. So anyone with a pip-wheel install +
-    a workspace elsewhere on disk would have config autodetect
-    silently return None despite having a correctly-placed
-    `.ee-kb-tools/config/kb-importer.yaml`. The same bug existed
-    in kb_citations; both fixed here.
+    Pre-0.29.4 only ran (2). 0.29.4 added (1) as a fallback.
+    0.29.5 re-ordered so (1) runs first: install-first would
+    otherwise silently resolve to the *dev* workspace under an
+    editable install, regardless of the user's CWD.
 
     Caller falls back to CLI args / env vars if both autodetect
     paths fail.
@@ -94,17 +93,17 @@ def _find_workspace_config() -> Path | None:
         find_tools_dir, find_workspace_root, TOOLS_DIR_NAME,
     )
 
-    # (1) code-install-based.
-    tools = find_tools_dir()
-    if tools is not None:
-        candidate = tools / "config" / "kb-importer.yaml"
-        if candidate.exists():
-            return candidate
-
-    # (2) CWD-based walk-up.
+    # (1) CWD-based walk-up — authoritative.
     ws = find_workspace_root()
     if ws is not None:
         candidate = ws / TOOLS_DIR_NAME / "config" / "kb-importer.yaml"
+        if candidate.exists():
+            return candidate
+
+    # (2) code-install-based — deploy.sh compatibility.
+    tools = find_tools_dir()
+    if tools is not None:
+        candidate = tools / "config" / "kb-importer.yaml"
         if candidate.exists():
             return candidate
 

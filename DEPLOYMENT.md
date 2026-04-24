@@ -246,7 +246,9 @@ rm -rf /path/to/where/you/cloned/kb-tools
 
 ## Updating later
 
-Two valid patterns:
+Upgrading an existing workspace is covered in detail in
+[UPGRADING.md](UPGRADING.md), including the schema-bump and
+rollback procedures. Two valid patterns:
 
 ### Pattern A: `.ee-kb-tools/` as its own git repo
 

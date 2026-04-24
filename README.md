@@ -13,6 +13,10 @@ format on disk and (optionally) the SQLite projection inside the KB.
 > workspace (e.g. when an LLM agent sets up a user's machine
 > from a handoff). It uses `scripts/deploy.sh` to put the code
 > inside a `.ee-kb-tools/` directory next to their KB.
+>
+> [`UPGRADING.md`](UPGRADING.md) is for moving an existing
+> workspace from one version to a newer one — schema bumps,
+> config migrations, rollback, the whole procedure.
 
 ```
                        ┌─ live mode: localhost:23119 (Zotero running)
