@@ -5,6 +5,52 @@ All notable changes to ee-kb-tools.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is our own (calendar-ish, per-major-iteration).
 
+## [0.29.1] — 2026-04
+
+Completes the `_archived/` removal started in 0.29.0. 0.29.0 turned
+off the auto-archive step but kept compatibility shims; 0.29.1
+deletes the whole feature. **No back-compat** for KBs that still
+have PDFs under a legacy `storage/_archived/` — they must be
+flattened manually before upgrading:
+
+    mv storage/_archived/*/ storage/ && rmdir storage/_archived
+
+### Removed
+
+- `ARCHIVE_SUBDIR` constant
+- `ArchiveResult` dataclass
+- `archive_attachments()` function (was no-op + DeprecationWarning)
+- `unarchive_attachments()` function
+- `Config.archive_dir` property
+- `AttachmentScan.archived` + `AttachmentScan.unarchived` fields
+  (collapsed into a single `AttachmentScan.dirs` set)
+- `kb-importer unarchive` CLI subcommand
+- `is_archived` flag from `find_pdf()` return (now `Path | None`
+  instead of `tuple[Path | None, bool]`)
+- `is_archived` from `attachment_locations` tuples in
+  `_build_paper_body` and `build_paper_md`
+- `_archived/` fallback in `kb_write.ops.re_read_sources.papers_with_pdf`
+- `unreferenced_archived` / `unreferenced_unarchived` split in
+  `detect_orphans()` — now a single `unreferenced_dirs` list
+- `kb-mcp report`'s archived-bucket section
+
+### Changed
+
+- `scan_attachments()` only walks `storage/` (no more `_archived/`
+  traversal).
+- `status_cmd` shows `Attachment storage dirs: Total: N`; the
+  archived/unarchived split is gone.
+- `orphans_cmd` no longer mentions archive paths.
+- Importer/README updated.
+
+### Net effect
+
+Zero code paths in 0.29.1 read from, write to, or create a
+`_archived/` directory. The failure mode the whole redesign targeted
+(Zotero API blip → attachment dir shuffled → max_child_version
+reset → md mtime churn → kb-mcp reindex storm) cannot recur because
+the machinery that moved files is gone.
+
 ## [0.29.0] — 2026-04
 
 Focused release: removes a bug-causing feature (auto-archive) and

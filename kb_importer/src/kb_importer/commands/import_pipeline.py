@@ -16,12 +16,7 @@ from ..md_builder import (
     paper_md_path,
 )
 from ..md_io import atomic_write, extract_preserved
-from ..state import (
-    # archive_attachments intentionally NOT imported in 0.29.0 —
-    # auto-archive was removed. find_pdf() still resolves through
-    # both storage/ and storage/_archived/ for read compatibility.
-    find_pdf,
-)
+from ..state import find_pdf
 from ..zotero_reader import ZoteroItem, ZoteroReader
 
 log = logging.getLogger(__name__)
@@ -40,24 +35,21 @@ def _process_paper(
 
     # Locate each attachment's PDF. Same order as item.attachments so
     # the md lists them in Zotero's natural order (main PDF first).
+    # 0.29.1: tuple collapsed to (att, rel_path) after is_archived was
+    # removed. find_pdf() now returns Path | None; only one location
+    # (storage/) is checked.
     attachment_locations: list[tuple] = []
     for att in item.attachments:
-        pdf_abs, is_archived = find_pdf(cfg, att.key)
+        pdf_abs = find_pdf(cfg, att.key)
         rel_path: str | None = None
         if pdf_abs is not None:
             try:
-                rel = pdf_abs.relative_to(cfg.storage_dir)
-                rel_path = rel.as_posix()
-                # Strip leading "_archived/" if present, for a stable
-                # rel path regardless of archive state. (The archived
-                # flag in the tuple tells the reader the truth.)
-                if rel.parts and rel.parts[0] == "_archived":
-                    rel_path = "/".join(rel.parts[1:])
+                rel_path = pdf_abs.relative_to(cfg.storage_dir).as_posix()
             except ValueError:
                 # PDF was outside storage_dir (shouldn't happen, but
                 # be robust): fall back to filename only.
                 rel_path = pdf_abs.name
-        attachment_locations.append((att, rel_path, is_archived))
+        attachment_locations.append((att, rel_path))
 
     md_text = build_paper_md(
         item,
@@ -69,24 +61,6 @@ def _process_paper(
         return
 
     atomic_write(path, md_text)
-
-    # v0.29.0: auto-archive was removed. Pre-0.29, each successful
-    # import moved the paper's attachment dirs from storage/ to
-    # storage/_archived/. Combined with the _fetch_children swallow
-    # bug (also fixed in 0.29), this produced an endless attachment
-    # thrash: transient Zotero API errors would make papers look
-    # attachment-less, kb-importer would re-run and un-archive,
-    # then on the next successful fetch re-archive, each round
-    # bumping md mtimes and kb-mcp reindex work. The archive step
-    # added operational complexity for no user-visible benefit —
-    # attachments are keyed by Zotero key, not by whether they
-    # live in storage/ or _archived/. find_pdf() still looks in
-    # both locations so existing _archived/ contents remain
-    # reachable; we just don't move anything anymore.
-    #
-    # Operators who want to reclaim disk space from _archived/ can
-    # inspect and delete manually — `kb-importer orphans` still
-    # reports what's there.
 
 
 def _git_commit_enabled(args: argparse.Namespace) -> bool:

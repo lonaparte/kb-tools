@@ -83,7 +83,8 @@ def build_parser() -> argparse.ArgumentParser:
     import_cmd.add_parser(subparsers)
     sync_cmd.add_parser(subparsers)
     orphans_cmd.add_orphans_parser(subparsers)
-    orphans_cmd.add_unarchive_parser(subparsers)
+    # 0.29.1: `unarchive` subcommand removed with the _archived/
+    # feature removal.
     summary_cmd.add_set_summary_parser(subparsers)
     summary_cmd.add_import_summaries_parser(subparsers)
     summary_cmd.add_show_template_parser(subparsers)

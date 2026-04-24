@@ -7,11 +7,14 @@ levels:
   `papers/`. This is the answer for "what % of my library have I
   imported?".
 
-- **Attachment PDFs**: "archived" = under `storage/_archived/` (moved
-  there after a successful paper import), "unarchived" = still in
-  `storage/`. A single paper can have multiple attachments and each is
-  tracked independently. This is useful for spotting orphan storage
-  dirs (PDFs whose Zotero items are gone).
+- **Attachment PDFs**: count of subdirs under `storage/`. A single
+  paper can have multiple attachments and each has its own dir,
+  keyed by attachment (not paper) key. Useful for spotting orphan
+  storage dirs (PDFs whose Zotero items are gone) via
+  `check-orphans --verbose`.
+
+0.29.1: the archived/unarchived split is gone — `_archived/` is
+no longer a kb-importer-managed concept.
 """
 from __future__ import annotations
 
@@ -121,11 +124,9 @@ def run(args: argparse.Namespace, cfg: Config) -> int:
     # 0, 1, or N PDF attachments. These counts are over ALL attachments
     # (PDFs + non-PDFs), since scan_attachments doesn't distinguish.
     print("Attachment storage dirs:")
-    print(f"  Unarchived: {len(att_scan.unarchived)}")
-    print(f"  Archived:   {len(att_scan.archived)}")
+    print(f"  Total:      {len(att_scan.dirs)}")
     print()
-    print("  (An archived attachment dir means its paper was successfully")
-    print("   imported at some point. Note that one paper can produce")
-    print("   multiple archived attachment dirs — main PDF + supplements.)")
+    print("  (Counts subdirs under `storage/`. Each corresponds to one")
+    print("   Zotero attachment — a single paper can produce multiple)")
 
     return 0

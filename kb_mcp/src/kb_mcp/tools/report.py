@@ -291,7 +291,11 @@ def section_orphans(
         )
 
     try:
-        result = detect_orphans(cfg)
+        # 0.29.1: include_unreferenced=True so the report surfaces
+        # storage/ subdirs not referenced by any imported md. These
+        # are usually "not imported yet" rather than true orphans,
+        # but the report reader benefits from seeing them.
+        result = detect_orphans(cfg, include_unreferenced=True)
     except Exception as e:
         return (
             f"{header}\n\n"
@@ -301,11 +305,11 @@ def section_orphans(
             "partial result produced."
         )
 
-    orphan_papers         = result["orphan_papers"]
-    orphan_notes          = result["orphan_notes"]
-    unreferenced_archived = result["unreferenced_archived"]
+    orphan_papers     = result["orphan_papers"]
+    orphan_notes      = result["orphan_notes"]
+    unreferenced_dirs = result["unreferenced_dirs"]
 
-    if not any((orphan_papers, orphan_notes, unreferenced_archived)):
+    if not any((orphan_papers, orphan_notes, unreferenced_dirs)):
         return f"{header}\n\nNo orphans found."
 
     lines = [header, ""]
@@ -334,15 +338,15 @@ def section_orphans(
             lines.append(f"  - +{len(orphan_notes) - 10} more")
         lines.append("")
 
-    if unreferenced_archived:
+    if unreferenced_dirs:
         lines.append(
-            f"Archived attachment dirs not referenced by any imported "
-            f"md ({len(unreferenced_archived)}):"
+            f"Attachment dirs not referenced by any imported md "
+            f"({len(unreferenced_dirs)}):"
         )
-        for k in unreferenced_archived[:10]:
-            lines.append(f"  - storage/_archived/{k}/")
-        if len(unreferenced_archived) > 10:
-            lines.append(f"  - +{len(unreferenced_archived) - 10} more")
+        for k in unreferenced_dirs[:10]:
+            lines.append(f"  - storage/{k}/")
+        if len(unreferenced_dirs) > 10:
+            lines.append(f"  - +{len(unreferenced_dirs) - 10} more")
 
     return "\n".join(lines).rstrip()
 

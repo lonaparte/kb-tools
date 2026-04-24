@@ -81,22 +81,18 @@ def source_storage(kb_root: Path, storage_dir: Path) -> list[PaperInfo]:
             att_to_paper.setdefault(att, p.paper_key)
 
     # Find attachment keys that have a PDF on disk.
+    # 0.29.1: PDFs are only under <storage>/<KEY>/*.pdf now (the
+    # _archived/ fallback was removed in state.py). Still skip
+    # dot-hidden and any legacy "_archived" folder the user may not
+    # have cleaned up yet.
     present_attachments: set[str] = set()
-    # Two possible storage layouts (v25 established): unarchived
-    # flat at <storage>/<KEY>/*.pdf; archived at
-    # <storage>/_archived/<KEY>/*.pdf. We walk both.
-    roots = [storage_dir]
-    archived = storage_dir / "_archived"
-    if archived.is_dir():
-        roots.append(archived)
-    for root in roots:
-        for att_dir in root.iterdir():
-            if not att_dir.is_dir():
-                continue
-            if att_dir.name.startswith(".") or att_dir.name == "_archived":
-                continue
-            if any(att_dir.glob("*.pdf")):
-                present_attachments.add(att_dir.name)
+    for att_dir in storage_dir.iterdir():
+        if not att_dir.is_dir():
+            continue
+        if att_dir.name.startswith(".") or att_dir.name == "_archived":
+            continue
+        if any(att_dir.glob("*.pdf")):
+            present_attachments.add(att_dir.name)
 
     # Map to paper_keys and filter.
     present_paper_keys = {

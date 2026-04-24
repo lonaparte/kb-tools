@@ -40,16 +40,17 @@ DEFAULT_KB_FIELDS = {
 def build_paper_md(
     item: ZoteroItem,
     preserved: PreservedContent,
-    attachment_locations: list[tuple[ZoteroAttachment, str | None, bool]] | None = None,
+    attachment_locations: list[tuple[ZoteroAttachment, str | None]] | None = None,
 ) -> str:
     """Build the full md text for a paper.
 
     Args:
         item: The Zotero paper item (with child notes + attachments).
         preserved: Content to keep from any existing md at this path.
-        attachment_locations: per-attachment (attachment, rel_path, is_archived)
+        attachment_locations: per-attachment (attachment, rel_path)
             tuples in the same order as item.attachments. rel_path is None
             if the PDF isn't on disk. If not provided, defaults to empty.
+            (0.29.1: dropped is_archived after _archived/ removal.)
     """
     if attachment_locations is None:
         attachment_locations = []
@@ -269,17 +270,18 @@ def _build_note_frontmatter(item: ZoteroItem) -> dict:
 
 def _build_paper_body(
     item: ZoteroItem,
-    attachment_locations: list[tuple[ZoteroAttachment, str | None, bool]],
+    attachment_locations: list[tuple[ZoteroAttachment, str | None]],
     migrated_note_keys: set[str] | None = None,
 ) -> str:
     """Render a paper's md body.
 
     attachment_locations: one entry per attachment in item.attachments,
-    in the same order. Each entry is (attachment, rel_path, is_archived):
+    in the same order. Each entry is (attachment, rel_path):
     - rel_path: path to the PDF on disk, relative to the paper md file,
       or None if the PDF wasn't found in storage.
-    - is_archived: True if the PDF was found under _archived/ (only
-      meaningful when rel_path is not None).
+
+    0.29.1: `is_archived` dropped after the _archived/ feature was
+    removed entirely. Every PDF that's found is under storage/.
 
     migrated_note_keys: keys of child notes that have been migrated into
     the fulltext region by `import-summaries`. These are EXCLUDED from
@@ -357,7 +359,7 @@ def _build_paper_body(
         # as the label (more meaningful than the key), plus the relative
         # path, plus its attachment key (so AI / reader can correlate
         # with storage/ subdirs).
-        for att, rel_path, archived in attachment_locations:
+        for att, rel_path in attachment_locations:
             label = att.filename or "(unnamed)"
             if rel_path is None:
                 lines.append(
@@ -365,9 +367,8 @@ def _build_paper_body(
                     f"(attachment key `{att.key}`)"
                 )
             else:
-                tag = " (archived)" if archived else ""
                 lines.append(
-                    f"- [{label}]({rel_path}){tag} "
+                    f"- [{label}]({rel_path}) "
                     f"— attachment key `{att.key}`"
                 )
     lines.append("")

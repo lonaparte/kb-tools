@@ -115,12 +115,9 @@ class Config:
         """
         return self.zotero_storage_dir
 
-    @property
-    def archive_dir(self) -> Path:
-        """Sibling `_archived/` directory inside storage, created and
-        maintained by kb-importer.
-        """
-        return self.zotero_storage_dir / "_archived"
+    # 0.29.1: `archive_dir` property removed. The `_archived/` feature
+    # was fully deleted; no code needs to know about a sibling dir
+    # under storage anymore.
 
 
 def _expand(p: str | Path) -> Path:

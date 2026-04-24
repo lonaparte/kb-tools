@@ -16,36 +16,34 @@ So:
 ## Progress tracking
 
 "Paper X is imported" iff `papers/{paper_key}.md` exists in the KB
-repo. We do NOT derive this from `storage/_archived/`, because that
-directory is organised by attachment keys and an attachment can be
-archived without its md being written (if the process was interrupted
-between steps).
-
-`storage/_archived/` is a *side-effect* of a successful import: after
-writing the md, we move each of the paper's attachment subdirectories
-under `_archived/` so they're out of the way of a future `list
-pending` scan. Lose the archive dir and the md still exists; delete
-the md and `unarchive` can put the attachments back in the path that
-`list pending` will see.
+repo. We do NOT derive this from scanning `storage/`, because that
+directory is organised by attachment keys (not paper keys) and an
+attachment subdir can exist without its md being written (if a
+process was interrupted between steps).
 
 ## API
 
 - `imported_paper_keys(cfg)`, `imported_note_keys(cfg)`:
-  Read from `papers/` and `topics/standalone-note/` (v26; v25 was
-  `zotero-notes/`) — the authoritative source.
-
-- `archived_attachment_keys(cfg)`, `unarchived_attachment_keys(cfg)`:
-  Read from the two halves of `storage/`. Useful for `status` display
-  but NOT for deciding which papers are imported.
-
+  Read from `papers/` and `topics/standalone-note/` — the
+  authoritative source.
+- `scan_attachments(cfg)`:
+  List attachment-key subdirs under `storage/`. Useful for `status`
+  display, NOT for deciding which papers are imported.
 - `find_pdf(cfg, attachment_key)`:
-  Locate the PDF file for ONE attachment. Tries both unarchived and
-  archived locations.
+  Locate the PDF file for ONE attachment.
 
-- `archive_attachments(cfg, attachment_keys)` /
-  `unarchive_attachments(cfg, attachment_keys)`:
-  Bulk move a list of attachment directories. Idempotent on per-dir
-  basis; reports which ones succeeded/failed.
+## 0.29.1: _archived removed entirely
+
+Before 0.29.0, each successful paper import moved
+`storage/{attachment_key}/` into `storage/_archived/{attachment_key}/`,
+nominally to keep `ls storage/` tidy. 0.29.0 neutered the
+auto-archive step (made it a no-op) and left `find_pdf()` with a
+back-compat fallback. 0.29.1 removes the feature entirely: no
+`_archived/` traversal, no `archive_attachments()` /
+`unarchive_attachments()` helpers, no `ArchiveResult` / `ARCHIVE_SUBDIR`
+/ `Config.archive_dir`. Personal-testing only; no back-compat with
+libraries that still have PDFs under `_archived/` — operators must
+flatten those manually (e.g. `mv storage/_archived/*/ storage/`).
 """
 from __future__ import annotations
 
@@ -55,55 +53,36 @@ from pathlib import Path
 from .config import Config
 
 
-ARCHIVE_SUBDIR = "_archived"
-
-
 @dataclass
 class AttachmentScan:
     """Snapshot of `storage/` attachment-key directories.
 
-    Both sets contain ATTACHMENT keys (not paper keys). For
-    paper-level progress, use `imported_paper_keys()`.
+    Contains ATTACHMENT keys (not paper keys). For paper-level
+    progress, use `imported_paper_keys()`.
+
+    0.29.1: previously split into unarchived + archived sets.
+    Collapsed to a single set after _archived was removed.
     """
 
-    unarchived: set[str] = field(default_factory=set)   # attachment keys still in storage/
-    archived: set[str] = field(default_factory=set)     # attachment keys under _archived/
+    dirs: set[str] = field(default_factory=set)
 
 
 def scan_attachments(cfg: Config) -> AttachmentScan:
-    """List attachment-key directories under storage/ and _archived/.
+    """List attachment-key directories under `storage/`.
 
-    Both halves are reported separately. Hidden directories and any
-    non-directory entries are skipped. The `_archived` dir itself is
-    excluded from the `unarchived` set.
-
-    Note: this does NOT tell you which PAPERS are imported. An
-    attachment's presence under _archived/ means the last import
-    touched it, but a paper with no PDF attachments will never appear
-    here.
+    Hidden directories and non-directory entries are skipped. Does
+    NOT tell you which PAPERS are imported — use `imported_paper_keys`
+    for that.
     """
     scan = AttachmentScan()
-
     storage = cfg.storage_dir
     if storage.exists():
         for child in storage.iterdir():
             if not child.is_dir():
                 continue
-            if child.name == ARCHIVE_SUBDIR:
-                continue
             if child.name.startswith("."):
                 continue
-            scan.unarchived.add(child.name)
-
-    archive = cfg.archive_dir
-    if archive.exists():
-        for child in archive.iterdir():
-            if not child.is_dir():
-                continue
-            if child.name.startswith("."):
-                continue
-            scan.archived.add(child.name)
-
+            scan.dirs.add(child.name)
     return scan
 
 
@@ -113,11 +92,7 @@ def note_is_imported(cfg: Config, zotero_key: str) -> bool:
 
 
 def paper_is_imported(cfg: Config, paper_key: str) -> bool:
-    """A paper counts as imported iff its md exists.
-
-    This is the authoritative answer — do NOT check `_archived/` for
-    this purpose (archive is attachment-keyed, not paper-keyed).
-    """
+    """A paper counts as imported iff its md exists."""
     return (cfg.papers_dir / f"{paper_key}.md").exists()
 
 
@@ -138,121 +113,26 @@ def imported_paper_keys(cfg: Config) -> set[str]:
 
 
 # ---------------------------------------------------------------------
-# Attachment archival (moves whole attachment-key directories)
-# ---------------------------------------------------------------------
-
-@dataclass
-class ArchiveResult:
-    """Outcome of a bulk archive/unarchive operation."""
-    moved: list[str] = field(default_factory=list)       # attachment keys successfully moved
-    already_there: list[str] = field(default_factory=list)  # dst existed; no-op
-    not_found: list[str] = field(default_factory=list)   # src didn't exist
-    errors: list[tuple[str, str]] = field(default_factory=list)  # (key, reason)
-
-
-def archive_attachments(
-    cfg: Config, attachment_keys: list[str]
-) -> ArchiveResult:
-    """Deprecated in 0.29.0 — returns empty result without moving
-    anything.
-
-    Historical behaviour (pre-0.29): moved storage/{ak}/ →
-    _archived/{ak}/ for each attachment key, to keep `ls storage/`
-    uncluttered. Combined with a separate bug where
-    `_fetch_children` swallowed exceptions, this produced an
-    attachment-thrash: any Zotero API blip made a paper look
-    attachment-less, the importer un-archived the files, then on
-    the next successful fetch archived them again — each round
-    advancing md mtimes and forcing a full kb-mcp reindex sweep.
-
-    The archive step had no functional benefit: attachments are
-    keyed by Zotero key and resolved via find_pdf(), which knows
-    to check both locations. We removed the operation and left
-    find_pdf's _archived/ fallback in place, so existing
-    installations' PDFs stay resolvable without any migration.
-
-    This shim is kept (returning an empty success result) for
-    back-compat with callers that may have been written against
-    the old API; it emits a DeprecationWarning when called.
-    """
-    import warnings
-    if attachment_keys:
-        warnings.warn(
-            "archive_attachments() is a no-op as of 0.29.0 — the "
-            "auto-archive feature was removed. Attachments stay in "
-            "storage/ permanently; find_pdf() still resolves "
-            "_archived/ for back-compat. Stop calling this.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-    # Treat every key as "not found" so callers can log benignly.
-    return ArchiveResult(not_found=list(attachment_keys))
-
-
-def unarchive_attachments(
-    cfg: Config, attachment_keys: list[str]
-) -> ArchiveResult:
-    """Inverse of archive_attachments — move storage/_archived/{ak}/
-    → storage/{ak}/.
-
-    v0.29.0: kept as a working operation (unlike archive_attachments,
-    which became a no-op). Rationale: the auto-archive feature was
-    removed to stop the attachment-thrash bug, but installations
-    upgrading from <0.29 may already have PDFs under _archived/.
-    This function is the manual migration tool — operators can run
-    `kb-importer orphans --unarchive KEY` (or bulk equivalent) to
-    pull those files back into storage/. find_pdf() looks in both
-    locations so the migration is purely cosmetic / disk-hygiene.
-    """
-    result = ArchiveResult()
-
-    for ak in attachment_keys:
-        src = cfg.archive_dir / ak
-        dst = cfg.storage_dir / ak
-
-        if src.exists() and dst.exists():
-            result.errors.append(
-                (ak, f"both src and dst exist; refusing to overwrite {dst}")
-            )
-            continue
-        if not src.exists() and dst.exists():
-            result.already_there.append(ak)
-            continue
-        if not src.exists() and not dst.exists():
-            result.not_found.append(ak)
-            continue
-
-        try:
-            src.rename(dst)
-            result.moved.append(ak)
-        except OSError as e:
-            result.errors.append((ak, str(e)))
-
-    return result
-
-
-# ---------------------------------------------------------------------
 # Finding individual PDFs
 # ---------------------------------------------------------------------
 
-def find_pdf(cfg: Config, attachment_key: str) -> tuple[Path | None, bool]:
+def find_pdf(cfg: Config, attachment_key: str) -> Path | None:
     """Locate the PDF file for one attachment key.
 
-    Returns (path, is_archived):
-    - path: the .pdf file on disk, or None if not found.
-    - is_archived: True iff path was found under _archived/.
+    Returns the .pdf file on disk, or None if not found.
 
     A Zotero attachment subdirectory typically holds exactly one PDF
-    plus a few small metadata files (.zotero-ft-cache, etc.). If there
-    are multiple PDFs, the lexicographically first one is returned.
+    plus a few small metadata files (.zotero-ft-cache, etc.). If
+    there are multiple PDFs, the lexicographically first one is
+    returned.
+
+    0.29.1: signature changed from `tuple[Path | None, bool]` to
+    `Path | None` (removed is_archived flag). All callers updated.
     """
-    for base, is_archived in (
-        (cfg.storage_dir / attachment_key, False),
-        (cfg.archive_dir / attachment_key, True),
-    ):
-        if not base.exists() or not base.is_dir():
-            continue
-        for p in sorted(base.iterdir()):
-            if p.is_file() and p.suffix.lower() == ".pdf":
-                return p, is_archived
-    return None, False
+    base = cfg.storage_dir / attachment_key
+    if not base.exists() or not base.is_dir():
+        return None
+    for p in sorted(base.iterdir()):
+        if p.is_file() and p.suffix.lower() == ".pdf":
+            return p
+    return None

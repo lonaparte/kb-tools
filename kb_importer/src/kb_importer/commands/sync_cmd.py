@@ -99,7 +99,7 @@ def run(args: argparse.Namespace, cfg: Config) -> int:
 
 def _sync_papers(cfg: Config, reader: ZoteroReader, *, dry_run: bool) -> tuple[int, int]:
     # Source of truth for "which papers are imported": the md files in
-    # papers/. NOT the storage _archived/ dir (attachment-keyed).
+    # papers/. Not the storage/ dir, which is attachment-keyed.
     imported = imported_paper_keys(cfg)
     updated, failed = 0, 0
 

@@ -150,10 +150,7 @@ kb-importer sync
 # Find md files whose Zotero items are gone.
 kb-importer check-orphans
 
-# Roll back: move a paper's PDF out of _archived/ so it can be re-imported.
-kb-importer unarchive ABCD1234
-
-# Preview mode (no writes, no PDF moves).
+# Preview mode (no writes).
 kb-importer --dry-run import papers --all-pending
 ```
 
@@ -275,15 +272,17 @@ periodic syncs on the server in `web` mode.
 
 ## How "done" is tracked
 
-Per the spec, progress lives in the filesystem:
+Progress lives in the filesystem:
 
-- **Papers**: a paper is "imported" iff its storage subdir is under
-  `<zotero_storage_dir>/_archived/`. `import papers KEY` moves it there
-  on success; `unarchive KEY` moves it back.
-- **Standalone notes**: imported iff `zotero-notes/{key}.md` exists.
+- **Papers**: a paper is "imported" iff `papers/{paper_key}.md` exists
+  in the KB repo.
+- **Standalone notes**: imported iff `topics/standalone-note/{key}.md`
+  exists.
 
-There is no state file. Lose your KB repo and the `_archived/`
-directory still carries the canonical "what's done" information.
+There is no separate state file. 0.29.1 also removed the
+`storage/_archived/` dance that existed pre-0.29 — attachments stay
+flat under `storage/<attachment_key>/` and the md is the authority
+on import state.
 
 ## Sync: what triggers a re-import
 
