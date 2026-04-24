@@ -1,16 +1,23 @@
 """`kb-importer import papers|notes` — core import flow.
 
 Flow per paper:
-  1. Fetch paper + attachments from Zotero in one round-trip.
-  2. Locate each attachment's PDF on disk (under storage/ or _archived/).
-  3. Extract preserved content from any existing md.
+  1. Fetch paper + attachments from Zotero in one round-trip
+     (raises ZoteroChildrenFetchError on API failure; caller SKIPS
+     this paper without rewriting its md).
+  2. Locate each attachment's PDF on disk under storage/.
+  3. Extract preserved content from any existing md
+     (AI zone + any marker-delimited regions the user wants to keep).
   4. Build new md text listing ALL attachments.
   5. Atomically write md.
-  6. On success, archive all unarchived attachment dirs in bulk.
-  7. Any failure past step 5 is logged but doesn't erase the md —
-     future runs can re-archive.
+  6. Optional fulltext pass runs afterwards when `--fulltext`
+     (or implicit via `--all-unprocessed`) is set — calls the LLM
+     per paper, writes summary into the ai-summary region, handles
+     quota fallback and permanent (400/404) BadRequestError cases.
 
-Flow per note: no attachments, no archive step.
+Flow per note: no attachments, nothing else.
+
+0.29.1: the auto-archive step after step 5 is gone; attachments
+stay flat under storage/. See state.py for full rationale.
 """
 from __future__ import annotations
 
