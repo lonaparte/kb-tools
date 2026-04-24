@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "kb-write"
-version = "0.29.1"
+version = "0.29.2"
 description = "Client-agnostic write layer for the ee-kb knowledge base."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -31,7 +31,7 @@ classifiers = [
 # agents (Claude Code, opencode, etc.) via shell without pulling in
 # the heavy MCP / sqlite-vec / openai stack that kb-mcp carries.
 dependencies = [
-    "kb-core==0.29.1",
+    "kb-core==0.29.2",
     "python-frontmatter>=1.0.0",
     "PyYAML>=6.0",
 ]
@@ -47,5 +47,27 @@ packages = ["src/kb_write"]
 # finds it at runtime, even in editable installs). Keep them in sync
 # manually; the copy in src/ is what ships in the wheel.
 
+# 0.29.2: force-include the scaffold yaml templates. They live under
+# kb_write/src/kb_write/scaffold/ but match gitignore patterns
+# (config_kb_*.yaml) — those patterns are there to catch user-copy
+# mistakes from bleeding into the repo, but Hatch's wheel builder
+# honours .gitignore by default and was consequently dropping the
+# templates from the installed wheel. The symptom: `kb-write init`
+# silently skipped config scaffolding post-install, because the
+# package-data files it expected weren't there. The force-include
+# below tells Hatch "ignore gitignore for these three paths —
+# they're legitimate package data, not leaked user config".
+[tool.hatch.build.targets.wheel.force-include]
+"src/kb_write/scaffold/config_kb_importer.yaml"  = "kb_write/scaffold/config_kb_importer.yaml"
+"src/kb_write/scaffold/config_kb_mcp.yaml"       = "kb_write/scaffold/config_kb_mcp.yaml"
+"src/kb_write/scaffold/config_kb_citations.yaml" = "kb_write/scaffold/config_kb_citations.yaml"
+
 [tool.hatch.build.targets.sdist]
 include = ["src/kb_write", "README.md", "AGENT-WRITE-RULES.md", "pyproject.toml"]
+
+# Same rationale as the wheel force-include above — ensure sdist
+# carries the scaffold templates even though they match gitignore.
+[tool.hatch.build.targets.sdist.force-include]
+"src/kb_write/scaffold/config_kb_importer.yaml"  = "src/kb_write/scaffold/config_kb_importer.yaml"
+"src/kb_write/scaffold/config_kb_mcp.yaml"       = "src/kb_write/scaffold/config_kb_mcp.yaml"
+"src/kb_write/scaffold/config_kb_citations.yaml" = "src/kb_write/scaffold/config_kb_citations.yaml"

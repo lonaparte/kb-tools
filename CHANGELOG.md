@@ -5,6 +5,50 @@ All notable changes to ee-kb-tools.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is our own (calendar-ish, per-major-iteration).
 
+## [0.29.2] — 2026-04
+
+Packaging bug fix. 0.29.1 shipped a wheel that was missing three
+scaffold templates — `kb-write init` silently skipped creating
+`<workspace>/.ee-kb-tools/config/{kb-importer,kb-mcp,kb-citations}.yaml`
+because the files weren't in the installed package. This was the
+root cause behind "0.29.1 不再随包附带 config/ 目录，但代码仍从
+.ee-kb-tools/config/kb-importer.yaml 读取配置" user observation.
+
+### Fixed
+
+- `kb_write/pyproject.toml` now force-includes the three scaffold
+  yaml templates in both wheel and sdist targets.
+
+Root cause: the repo's `.gitignore` has a rule
+
+    config_kb_importer.yaml
+    config_kb_mcp.yaml
+    config_kb_citations.yaml
+
+to catch user-real-config copies leaking into the repo. Hatch
+(the build backend) honours gitignore patterns by default when
+assembling the wheel, so it was dropping the scaffold templates
+at `kb_write/src/kb_write/scaffold/config_kb_*.yaml` — same
+filename as the gitignore rule. The wheel therefore landed
+without them, `kb-write init`'s `importlib.resources.read_text`
+raised FileNotFoundError, which init caught via a defensive
+try/except and silently skipped. Operators saw: no config/, no
+error, no clue.
+
+The release zip built by `scripts/make_release.sh` was
+unaffected — it uses `python3 -m zipfile` or `zip -r`, neither
+of which honours gitignore. Only the pip-installable wheel was
+missing the files. Consequently the issue was invisible in our
+stress-run's post-install test against the editable install but
+showed up in the user's real deployment.
+
+### Added
+
+- End-to-end verification in the fresh-venv test path confirms
+  `pip install` → `kb-write init` does populate
+  `<workspace>/.ee-kb-tools/config/` with the three yaml files
+  plus `README.md`.
+
 ## [0.29.1] — 2026-04
 
 Completes the `_archived/` removal started in 0.29.0. 0.29.0 turned
