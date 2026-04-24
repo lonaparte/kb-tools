@@ -5,6 +5,85 @@ All notable changes to ee-kb-tools.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is our own (calendar-ish, per-major-iteration).
 
+## [0.29.0] — 2026-04
+
+Focused release: removes a bug-causing feature (auto-archive) and
+fixes the root cause of attachment-state thrashing.
+
+### Fixed
+
+- **`_fetch_children` no longer silently swallows API errors.**
+  Pre-0.29, `zotero_reader._fetch_children` caught every exception
+  from `self._z.children()` and returned `([], [])`. Any transient
+  Zotero API failure (network blip, rate limit, auth renewal,
+  server 5xx) made papers with real PDFs appear attachment-less.
+  The import pipeline then rewrote the paper md with
+  `zotero_attachment_keys: []` and `zotero_max_child_version: 0`;
+  on the next successful fetch the values swung back. Visible
+  symptoms: papers oscillating between "has-PDF" / "no-PDF" in
+  the KB, `storage/_archived/` getting shuffled repeatedly,
+  per-paper md mtimes advancing on every sync, kb-mcp reindexing
+  everything, `zotero_max_child_version` jumping around.
+
+  Fix: new typed `ZoteroChildrenFetchError` propagates up. The
+  top-level import loop catches this specific error and SKIPS the
+  paper's md rewrite — transient blips leave the paper unchanged.
+  Operator sees `⚠ KEY SKIPPED: could not fetch children from
+  Zotero (...). The md was left UNCHANGED. Re-run when the
+  Zotero API is healthy.` instead of silent corruption.
+
+### Removed
+
+- **Auto-archive of attachment directories after import.**
+  Pre-0.29, each successful paper import moved
+  `storage/<attachment_key>/` → `storage/_archived/<attachment_key>/`
+  "to keep `ls storage/` uncluttered". In combination with the
+  `_fetch_children` swallow bug (above), this caused attachment
+  dirs to be moved on every blip-then-recover cycle. The feature
+  provided no functional benefit — attachments are keyed by Zotero
+  key; `find_pdf()` already resolves both locations transparently.
+
+  0.29 makes `archive_attachments()` a no-op with
+  `DeprecationWarning`. The auto-archive call site in
+  `import_pipeline._process_paper` is gone. PDFs stay in
+  `storage/` permanently after import.
+
+  **Back-compat:** installations upgrading from <0.29 may have
+  PDFs under `storage/_archived/` from past runs. `find_pdf()`
+  still resolves that path, so nothing breaks. For disk hygiene,
+  operators can use `kb-importer orphans --unarchive` (which
+  remains functional) to pull files back into `storage/`, or
+  delete `storage/_archived/` contents after verifying they're
+  not needed.
+
+### Documentation
+
+- **`sync_cmd.py` module docstring adds a Q&A section on
+  resetting `zotero_*` version fields to 0.** Short answer: safe
+  — forces a one-time re-import sweep; idempotent and
+  preserves the AI zone. Includes a Python one-liner for bulk
+  reset, useful for recovering from the pre-0.29 thrash-induced
+  md corruption.
+
+### Migration note for operators upgrading from <0.29
+
+If your library was hit by the pre-0.29 thrash (papers showing
+attachment drops after transient API errors), the recommended
+recovery is:
+
+1. Upgrade to 0.29 (fixes root cause).
+2. Optionally: run the reset-to-0 snippet from `sync_cmd.py`'s
+   docstring on your papers/ dir.
+3. Run `kb-importer sync papers` — all papers re-import from
+   current Zotero state, attachment_keys + child_version fields
+   become correct, md mtimes advance ONCE and then stabilise.
+4. Optionally: inspect `storage/_archived/` and decide whether
+   to `kb-importer orphans --unarchive` back to `storage/` or
+   just delete it.
+
+No data loss; AI zones are preserved across re-imports via the
+existing `extract_preserved` mechanism.
+
 ## [0.28.2] — 2026-04
 
 Bug-fix release from two independent code reviews plus the

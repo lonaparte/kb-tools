@@ -34,6 +34,36 @@ class ZoteroSourceError(Exception):
     (missing API key, invalid mode, etc.)."""
 
 
+class ZoteroChildrenFetchError(Exception):
+    """Raised by _fetch_children when the children() API call fails.
+
+    v0.29.0: new typed error. Pre-0.29 the caller silently returned
+    `([], [])` on any exception from `self._z.children(parent_key)`,
+    which made papers with real PDFs appear attachment-less on the
+    next import. The import pipeline would then rewrite the paper
+    md with `zotero_attachment_keys: []` and a reset
+    `zotero_max_child_version: 0`, then on the next (successful)
+    fetch swing back. Real consequences: zotero/storage got shuffled
+    into _archived/ and back, papers oscillated between
+    "has-PDF" / "no-PDF" in the KB, md mtimes churned, kb-mcp
+    reindexed everything, sync_cmd reported version drift.
+
+    Now the fetch failure propagates as a typed exception and the
+    top-level import loop catches it, logs, and SKIPS this paper's
+    md rewrite. Transient blips leave the paper unchanged; a later
+    successful run picks it up. This also means a FIRST-TIME import
+    fails loudly for this paper rather than silently creating a
+    broken md.
+
+    Attributes:
+        parent_key: the paper's Zotero key we couldn't fetch children for.
+    """
+
+    def __init__(self, message: str, *, parent_key: str = ""):
+        super().__init__(message)
+        self.parent_key = parent_key
+
+
 # Zotero item types we consider "papers" (generate papers/{key}.md).
 # Anything note/attachment is handled specially.
 PAPER_ITEM_TYPES = {
@@ -351,18 +381,33 @@ class ZoteroReader:
         only — other contentTypes (text/html snapshots, images, etc.)
         are dropped, because Phase 1 only handles PDFs.
 
-        Failures in the children fetch (network, permissions, etc.) are
-        swallowed here: we return empty lists and let the caller log.
-        The alternative — propagating — would abort the whole import
-        over a transient network blip.
+        v0.29.0: API-call failures now propagate as
+        `ZoteroChildrenFetchError`. Pre-0.29 we wrapped the call in
+        a bare `except Exception` that returned `([], [])`, reasoning
+        that a transient blip shouldn't abort the whole import. The
+        reasoning was wrong: the silent empty-return made the caller
+        rewrite the paper md with `attachment_keys: []` and
+        `max_child_version: 0`, then on the next successful run
+        rewrite it back to the real values — an endless thrash across
+        the KB whenever the Zotero API had a bad minute. Now the
+        error propagates, the top-level import loop catches it,
+        LOGS the paper as skipped, and moves on without touching the
+        md. Transient blips → no data churn. Persistent failure →
+        loud error, not silent corruption.
         """
         notes: list[ZoteroNote] = []
         attachments: list[ZoteroAttachment] = []
 
         try:
             children = self._z.children(parent_key)
-        except Exception:
-            return notes, attachments
+        except Exception as e:
+            # Typed-error propagation: caller distinguishes "no
+            # children" (return of []) from "fetch failed".
+            raise ZoteroChildrenFetchError(
+                f"Zotero children() failed for parent {parent_key!r}: "
+                f"{type(e).__name__}: {e}",
+                parent_key=parent_key,
+            ) from e
 
         for child in children:
             data = child.get("data", {})

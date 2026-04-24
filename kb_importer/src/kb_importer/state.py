@@ -153,49 +153,57 @@ class ArchiveResult:
 def archive_attachments(
     cfg: Config, attachment_keys: list[str]
 ) -> ArchiveResult:
-    """Move storage/{ak}/ → _archived/{ak}/ for each attachment key.
+    """Deprecated in 0.29.0 — returns empty result without moving
+    anything.
 
-    Per-key idempotent:
-    - if src doesn't exist AND dst already exists → `already_there`
-    - if src doesn't exist AND dst doesn't either → `not_found`
-    - if src exists AND dst exists → `errors` (won't overwrite)
-    - otherwise move and record in `moved`
+    Historical behaviour (pre-0.29): moved storage/{ak}/ →
+    _archived/{ak}/ for each attachment key, to keep `ls storage/`
+    uncluttered. Combined with a separate bug where
+    `_fetch_children` swallowed exceptions, this produced an
+    attachment-thrash: any Zotero API blip made a paper look
+    attachment-less, the importer un-archived the files, then on
+    the next successful fetch archived them again — each round
+    advancing md mtimes and forcing a full kb-mcp reindex sweep.
 
-    Does NOT fail on first error; tries every key so caller can see
-    the full picture.
+    The archive step had no functional benefit: attachments are
+    keyed by Zotero key and resolved via find_pdf(), which knows
+    to check both locations. We removed the operation and left
+    find_pdf's _archived/ fallback in place, so existing
+    installations' PDFs stay resolvable without any migration.
+
+    This shim is kept (returning an empty success result) for
+    back-compat with callers that may have been written against
+    the old API; it emits a DeprecationWarning when called.
     """
-    result = ArchiveResult()
-    cfg.archive_dir.mkdir(parents=True, exist_ok=True)
-
-    for ak in attachment_keys:
-        src = cfg.storage_dir / ak
-        dst = cfg.archive_dir / ak
-
-        if src.exists() and dst.exists():
-            result.errors.append(
-                (ak, f"both src and dst exist; refusing to overwrite {dst}")
-            )
-            continue
-        if not src.exists() and dst.exists():
-            result.already_there.append(ak)
-            continue
-        if not src.exists() and not dst.exists():
-            result.not_found.append(ak)
-            continue
-
-        try:
-            src.rename(dst)
-            result.moved.append(ak)
-        except OSError as e:
-            result.errors.append((ak, str(e)))
-
-    return result
+    import warnings
+    if attachment_keys:
+        warnings.warn(
+            "archive_attachments() is a no-op as of 0.29.0 — the "
+            "auto-archive feature was removed. Attachments stay in "
+            "storage/ permanently; find_pdf() still resolves "
+            "_archived/ for back-compat. Stop calling this.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+    # Treat every key as "not found" so callers can log benignly.
+    return ArchiveResult(not_found=list(attachment_keys))
 
 
 def unarchive_attachments(
     cfg: Config, attachment_keys: list[str]
 ) -> ArchiveResult:
-    """Inverse of archive_attachments."""
+    """Inverse of archive_attachments — move storage/_archived/{ak}/
+    → storage/{ak}/.
+
+    v0.29.0: kept as a working operation (unlike archive_attachments,
+    which became a no-op). Rationale: the auto-archive feature was
+    removed to stop the attachment-thrash bug, but installations
+    upgrading from <0.29 may already have PDFs under _archived/.
+    This function is the manual migration tool — operators can run
+    `kb-importer orphans --unarchive KEY` (or bulk equivalent) to
+    pull those files back into storage/. find_pdf() looks in both
+    locations so the migration is purely cosmetic / disk-hygiene.
+    """
     result = ArchiveResult()
 
     for ak in attachment_keys:

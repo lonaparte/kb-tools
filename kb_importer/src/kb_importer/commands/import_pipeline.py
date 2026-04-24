@@ -17,9 +17,10 @@ from ..md_builder import (
 )
 from ..md_io import atomic_write, extract_preserved
 from ..state import (
-    archive_attachments,
+    # archive_attachments intentionally NOT imported in 0.29.0 —
+    # auto-archive was removed. find_pdf() still resolves through
+    # both storage/ and storage/_archived/ for read compatibility.
     find_pdf,
-    scan_attachments,
 )
 from ..zotero_reader import ZoteroItem, ZoteroReader
 
@@ -69,26 +70,23 @@ def _process_paper(
 
     atomic_write(path, md_text)
 
-    # Archive all unarchived attachment dirs in bulk.
-    # Only move ones currently in storage/ (not already under _archived/).
-    unarchived_keys = [
-        att.key
-        for att, _rel, is_archived in attachment_locations
-        if not is_archived and (cfg.storage_dir / att.key).exists()
-    ]
-    if unarchived_keys:
-        result = archive_attachments(cfg, unarchived_keys)
-        if result.moved:
-            log.info(
-                "Archived %d attachment dirs for paper %s: %s",
-                len(result.moved), key, ", ".join(result.moved),
-            )
-        for ak, reason in result.errors:
-            log.warning(
-                "Could not archive attachment %s (for paper %s): %s",
-                ak, key, reason,
-            )
-        # already_there and not_found are expected/benign; don't log.
+    # v0.29.0: auto-archive was removed. Pre-0.29, each successful
+    # import moved the paper's attachment dirs from storage/ to
+    # storage/_archived/. Combined with the _fetch_children swallow
+    # bug (also fixed in 0.29), this produced an endless attachment
+    # thrash: transient Zotero API errors would make papers look
+    # attachment-less, kb-importer would re-run and un-archive,
+    # then on the next successful fetch re-archive, each round
+    # bumping md mtimes and kb-mcp reindex work. The archive step
+    # added operational complexity for no user-visible benefit —
+    # attachments are keyed by Zotero key, not by whether they
+    # live in storage/ or _archived/. find_pdf() still looks in
+    # both locations so existing _archived/ contents remain
+    # reachable; we just don't move anything anymore.
+    #
+    # Operators who want to reclaim disk space from _archived/ can
+    # inspect and delete manually — `kb-importer orphans` still
+    # reports what's there.
 
 
 def _git_commit_enabled(args: argparse.Namespace) -> bool:

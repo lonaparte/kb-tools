@@ -27,7 +27,9 @@ from ..md_builder import (
 )
 from ..md_io import atomic_write, extract_preserved
 from ..state import (
-    archive_attachments,
+    # v0.29.0: archive_attachments no longer imported — auto-archive
+    # was removed. find_pdf still resolves both storage/ and
+    # storage/_archived/ for read-compat with pre-0.29 KBs.
     find_pdf,
     imported_note_keys,
     paper_is_imported,
@@ -265,6 +267,7 @@ def _run_locked(args: argparse.Namespace, cfg: Config) -> int:
     dry_run = getattr(args, "dry_run", False)
     written_keys: list[str] = []  # for batch git commit at end
 
+    from ..zotero_reader import ZoteroChildrenFetchError
     for key in sorted(keys):
         try:
             if args.target == "papers":
@@ -277,6 +280,20 @@ def _run_locked(args: argparse.Namespace, cfg: Config) -> int:
                 written_keys.append(key)
             else:
                 print(f"(dry-run) would import {key}")
+        except ZoteroChildrenFetchError as e:
+            # v0.29.0: children fetch failed. We deliberately do NOT
+            # rewrite the md in this case — pre-0.29 the bug was that
+            # the fetch error was swallowed and the md got rewritten
+            # with `attachment_keys: []` / `max_child_version: 0`,
+            # causing the attachment-thrash documented in the
+            # CHANGELOG. Skip this paper, log, move on.
+            failed += 1
+            print(
+                f"⚠ {key}  SKIPPED: could not fetch children from "
+                f"Zotero ({e}). The md was left UNCHANGED. Re-run "
+                f"when the Zotero API is healthy.",
+                file=sys.stderr,
+            )
         except Exception as e:
             failed += 1
             log.exception("import failed for %s", key)

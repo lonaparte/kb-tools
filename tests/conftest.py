@@ -98,6 +98,24 @@ def skip_if_no_frontmatter() -> None:
         )
 
 
+def skip_if_no_pyzotero() -> None:
+    """Skip when `pyzotero` is missing.
+
+    kb_importer.zotero_reader hard-imports `from pyzotero import
+    zotero` at module top, so anything that touches that module
+    (including the 0.29 children-fetch and no-auto-archive tests)
+    won't collect in a stdlib-only environment. Full venv has it
+    via the kb_importer dep.
+    """
+    try:
+        import pyzotero  # noqa: F401
+    except ImportError:
+        pytest.skip(
+            "pyzotero not installed; kb_importer.zotero_reader "
+            "imports it at module top"
+        )
+
+
 def skip_if_no_httpx() -> None:
     """Skip when `httpx` is missing.
 

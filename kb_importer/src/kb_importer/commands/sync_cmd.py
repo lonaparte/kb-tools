@@ -4,6 +4,42 @@ For each already-imported item:
   - Read the existing md's `zotero_version`.
   - If Zotero's current version is higher, re-import (preserving AI zone).
   - Otherwise, skip.
+
+## Resetting zotero_* version fields to 0 (operator Q&A)
+
+Q: "Can I safely set `zotero_max_child_version: 0` (or `zotero_version`,
+   `zotero_max_attachment_version`, etc.) in paper mds back to 0?"
+
+A: **Yes, safely.** The comparison in `_why_update_paper` is strict
+   `remote > local`. When you reset the local to 0, any remote value
+   greater than 0 (every real item has one) will flag the paper for
+   re-import. The re-import is idempotent at the md level:
+   - frontmatter is rewritten with the fresh remote values
+   - body is re-built from the item
+   - the "preserved" sections (AI zone + any content between custom
+     markers, see `md_io.extract_preserved`) are carried over
+     verbatim, so manually-added agent notes survive.
+
+   Consequences are purely "more work on the next sync": every
+   paper re-imports once, then subsequent syncs are no-ops again.
+   Useful for recovering from the pre-0.29 _fetch_children swallow
+   bug which could have left some mds with corrupted version
+   fields — a bulk reset forces a clean re-import.
+
+   One-liner to reset all papers:
+
+       python3 -c "
+       import pathlib, re
+       for p in pathlib.Path('papers').glob('*.md'):
+           text = p.read_text()
+           for field in ('zotero_version', 'zotero_max_child_version',
+                          'zotero_max_attachment_version'):
+               text = re.sub(rf'^{field}:.*$', f'{field}: 0',
+                             text, flags=re.MULTILINE)
+           p.write_text(text)
+       "
+
+   Then run `kb-importer sync papers` to re-import everything.
 """
 from __future__ import annotations
 
