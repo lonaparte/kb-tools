@@ -5,6 +5,73 @@ All notable changes to ee-kb-tools.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is our own (calendar-ish, per-major-iteration).
 
+## [1.1.0] — 2026-04-24
+
+First post-1.0 minor release. Adds a new embedding provider
+(OpenRouter) plus three 1.0.0-audit fixes caught by an independent
+review pass.
+
+### Added
+
+- **OpenRouter embedding provider** for the RAG / vector-index
+  pipeline. `embeddings.provider: openrouter` in `kb-mcp.yaml`
+  routes requests to https://openrouter.ai/api/v1 (OpenAI-wire
+  compatible) using `OPENROUTER_API_KEY`. Default model is
+  `openai/text-embedding-3-small` (1536 dim — same output as
+  direct OpenAI, useful when a user already has
+  `OPENROUTER_API_KEY` but not `OPENAI_API_KEY`). The stored
+  `papers.embedding_model` column carries an `openrouter/` prefix
+  (e.g. `openrouter/openai/text-embedding-3-small`) so switching
+  between direct OpenAI and OpenRouter-routed OpenAI triggers a
+  re-embed rather than silently reusing cached vectors.
+
+  The dim-lookup table in `kb_mcp.embedding._model_dim` now
+  recognises vendor-prefixed names. Supported out of the box:
+  `openai/text-embedding-3-*`, `voyage-ai/voyage-3*`,
+  `bge-*-en-v1.5`. Models not in the table can still be used via
+  an explicit `embeddings.dim: <N>` override in kb-mcp.yaml.
+
+- **`scripts/pre_release_full_check.sh`** — six-step battery
+  required before any public 1.x tag: lints, byte-compile, unit
+  tests, e2e, post-install smoke, release-zip build. The
+  lightweight `make_release.sh` still runs the four lints +
+  builds the zip for dev iterations, but a Production/Stable
+  release requires the full script to pass. Documented in
+  CONTRIBUTING.md's Releasing section.
+
+### Changed
+
+- **Scoping note added to both kb-mcp.yaml scaffold and the
+  kb-mcp README**: the `embeddings:` section configures the RAG
+  pipeline only. Paper summaries written by `kb-importer
+  --fulltext` use a completely separate LLM stack
+  (`--fulltext-provider` / `--fulltext-model` / `kb_importer.summarize`).
+  Changing one never alters the other. Root README grew a
+  "Two LLM configurations, never mixed" table to make the
+  separation obvious upfront.
+
+- **PyPI classifier** on all five packages flipped
+  `Development Status :: 4 - Beta` →
+  `Development Status :: 5 - Production/Stable`. 1.0.0 claimed
+  first stable but the classifiers still said Beta —
+  inconsistent. Fixed across the bundle.
+
+- **Root README section heading** `What's in this version
+  (Phase 4 — v26)` renamed to `Architecture` + `**Data model.**`
+  subheading. The internal phase / v26 naming is less useful
+  once 1.x ships.
+
+### Verification
+
+- Lints clean (four checks + stdlib-usage sweep).
+- Unit tests 415/415 (was 404 pre-1.1; +11 new `test_embedding_openrouter`
+  cases cover: provider registration, default resolution, missing-key
+  graceful degrade, vendor-prefix dim lookup, model-name prefix,
+  explicit dim override, unknown model helpful error).
+- E2E 46/46.
+- `pre_release_full_check.sh` green end-to-end including release zip
+  rebuild.
+
 ## [1.0.0] — 2026-04-24
 
 **First stable release.** The 0.29.x series (0.29.0 → 0.29.8)

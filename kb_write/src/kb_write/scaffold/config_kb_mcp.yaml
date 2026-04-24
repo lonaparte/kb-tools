@@ -14,36 +14,77 @@ logging:
   level: info                            # debug | info | warning | error
   # file: /path/to/kb-mcp.log            # omit → stderr only
 
+# SCOPE: this file configures the **RAG / vector-index embedding**
+# pipeline only. Paper summaries written by `kb-importer --fulltext`
+# use a completely separate LLM provider — see
+# `.ee-kb-tools/config/kb-importer.yaml` and the
+# `--fulltext-provider` / `--fulltext-model` CLI flags on
+# kb-importer. The two setups don't share config intentionally:
+# embedding config changes should never alter fulltext-summary
+# behavior and vice versa.
 embeddings:
   enabled: true
 
-  # Provider choice — picks which API to use.
+  # Provider choice — picks which API to use for RAG embeddings.
   #
-  #   "openai"  (default): OpenAI text-embedding-3-small, 1536 dim.
-  #             Also works with any OpenAI-compatible endpoint — set
-  #             `openai_base_url` below. See examples.
-  #   "gemini"            : Google Gemini gemini-embedding-001, 1536
-  #             dim by default (MRL-truncated).
+  #   "openai"     (default): OpenAI text-embedding-3-small, 1536 dim.
+  #                Also works with any OpenAI-compatible endpoint —
+  #                set `openai_base_url` below. See examples.
+  #   "openrouter"           : OpenRouter (openrouter.ai) — a router
+  #                to many upstream embedding providers (OpenAI,
+  #                Voyage, Cohere, …) behind one API key. Default
+  #                model routes to OpenAI's text-embedding-3-small.
+  #   "gemini"               : Google Gemini gemini-embedding-001,
+  #                1536 dim by default (MRL-truncated).
   #
-  # Both output 1536-dim vectors by default so switching providers
-  # doesn't force a rebuild of the vec0 table. The stored
+  # All providers output 1536-dim vectors by default so switching
+  # providers doesn't force a rebuild of the vec0 table. The stored
   # `embedding_model` column records which model produced each row;
   # `kb-mcp index` re-embeds any paper whose model differs.
   provider: openai
 
   # model: (omit to use provider default)
-  #   openai → text-embedding-3-small (1536 dim)
-  #   gemini → gemini-embedding-001 (1536 dim, MRL-truncated)
-  # dim: 1536                             # output dimension
+  #   openai     → text-embedding-3-small           (1536 dim)
+  #   openrouter → openai/text-embedding-3-small    (1536 dim)
+  #   gemini     → gemini-embedding-001             (1536 dim, MRL-truncated)
+  #
+  # OpenRouter model IDs are prefixed with the upstream vendor:
+  #   openai/text-embedding-3-small        (1536)
+  #   openai/text-embedding-3-large        (3072)
+  #   voyage-ai/voyage-3                   (1024)
+  #   voyage-ai/voyage-3-large             (1024)
+  # See https://openrouter.ai/models?modality=embeddings for the
+  # current catalog and pricing.
+  #
+  # dim: 1536                             # explicit override — only
+  #                                       # needed for models not in
+  #                                       # embedding._model_dim.
 
   # Env var NAMES (not values). Put the actual keys in ~/.bashrc:
   #   export OPENAI_API_KEY=sk-...
+  #   export OPENROUTER_API_KEY=sk-or-...
   #   export GEMINI_API_KEY=...
   openai_api_key_env: OPENAI_API_KEY
+  openrouter_api_key_env: OPENROUTER_API_KEY
   gemini_api_key_env: GEMINI_API_KEY
 
   # ----------------------------------------------------------------
-  # OpenAI-compatible endpoints
+  # OpenRouter
+  # ----------------------------------------------------------------
+  # Default endpoint is https://openrouter.ai/api/v1; override only
+  # if you route OpenRouter through a self-hosted proxy.
+  #
+  # openrouter_base_url: https://openrouter.ai/api/v1
+  #
+  # Example: switch the whole RAG pipeline to OpenRouter →
+  # OpenAI text-embedding-3-small (identical output to direct
+  # OpenAI, billed through your OpenRouter account):
+  #   provider: openrouter
+  #   model: openai/text-embedding-3-small
+  #   # OPENROUTER_API_KEY must be set in your shell rc.
+
+  # ----------------------------------------------------------------
+  # OpenAI-compatible endpoints (non-OpenRouter)
   # ----------------------------------------------------------------
   # The "openai" provider works with ANY server that speaks the
   # OpenAI /v1/embeddings protocol. Set `openai_base_url` to your

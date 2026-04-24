@@ -34,7 +34,15 @@ OUT_ZIP="$OUT_DIR/kb-tools-$VERSION.zip"
 # Sanity gates before we build the artefact — fail fast so we don't
 # ship a known-broken zip. Each check is `set -e`-wired; failure of
 # any one aborts the release.
-echo "=== pre-flight checks ==="
+#
+# Lint-level gates (fast, no code execution beyond parsing). These
+# run on every `make_release.sh` invocation so devs get quick
+# feedback. Unit / e2e / post-install tests are NOT run here on
+# purpose — they're slow and require a configured venv. Run
+# `scripts/pre_release_full_check.sh` before a public 1.x release
+# for the full battery. CHANGELOG must document that full check
+# ran for any version tagged Production/Stable.
+echo "=== pre-flight lint checks ==="
 python3 scripts/check_package_consistency.py
 python3 scripts/check_no_secrets.py
 python3 scripts/check_no_system_paths.py
@@ -42,7 +50,9 @@ python3 scripts/check_no_system_paths.py
 # symbol used in one split-file sibling but never imported. A
 # missing cross-module import compiles (NameError only fires at
 # runtime on the specific path) so linting is the only way to
-# block it before release.
+# block it before release. 0.29.4: also covers stdlib-module-
+# attribute-used-but-module-not-imported (caught the sys import
+# bug in import_fulltext/keys/pipeline).
 python3 scripts/check_cross_module_imports.py
 
 # Stage into a temp dir, filter on rsync.

@@ -133,7 +133,7 @@ class Config:
     # isn't set, embedding is skipped and kb-mcp falls back to
     # FTS5-only search.
     embeddings_enabled: bool = True
-    # Provider: "openai" | "gemini"
+    # Provider: "openai" | "gemini" | "openrouter"
     embedding_provider: str = "openai"
     embedding_model: str | None = None
     embedding_dim: int | None = None
@@ -142,6 +142,8 @@ class Config:
     openai_api_key_env: str = "OPENAI_API_KEY"
     openai_base_url: str | None = None
     gemini_api_key_env: str = "GEMINI_API_KEY"
+    openrouter_api_key_env: str = "OPENROUTER_API_KEY"
+    openrouter_base_url: str | None = None  # default resolves in the provider
     embedding_batch_size: int = 100
 
     # SQLite journal mode. "delete" (default) keeps `.kb-mcp/` as a
@@ -163,6 +165,12 @@ def _resolve_embedding_model(provider: str, model: str | None) -> str:
         return "text-embedding-3-small"
     if provider == "gemini":
         return "gemini-embedding-001"
+    if provider == "openrouter":
+        # Default: route to OpenAI's text-embedding-3-small via
+        # OpenRouter. Same underlying model as provider="openai" but
+        # billed through OpenRouter — useful when a user already
+        # has an OPENROUTER_API_KEY but not an OPENAI_API_KEY.
+        return "openai/text-embedding-3-small"
     raise ConfigError(f"unknown embedding_provider {provider!r}")
 
 
@@ -259,6 +267,10 @@ def load_config(
         openai_api_key_env=str(emb_cfg.get("openai_api_key_env", "OPENAI_API_KEY")),
         openai_base_url=emb_cfg.get("openai_base_url"),
         gemini_api_key_env=str(emb_cfg.get("gemini_api_key_env", "GEMINI_API_KEY")),
+        openrouter_api_key_env=str(
+            emb_cfg.get("openrouter_api_key_env", "OPENROUTER_API_KEY")
+        ),
+        openrouter_base_url=emb_cfg.get("openrouter_base_url"),
         embedding_batch_size=_parse_positive_int(
             emb_cfg.get("batch_size", 100),
             field="embeddings.batch_size",

@@ -115,33 +115,85 @@ pip install -e "./kb_mcp[write]"    # uses the [write] extra
 Without `kb_write`, the server starts in read-only mode (write tools
 disappear from the MCP tool list; a warning logs at startup).
 
-## Embedding provider (OpenAI or Gemini)
+## Embedding provider (RAG / vector index)
 
-Default: OpenAI `text-embedding-3-small` (1536 dim). To use Gemini
-instead, install the extra and configure the provider:
+Three providers ship in-tree: **OpenAI** (default), **OpenRouter**,
+and **Gemini**. All three output 1536-dim vectors by default, so
+switching doesn't force a rebuild of the vec0 table — the stored
+`embedding_model` column records which model produced each row and
+`kb-mcp index` re-embeds papers whose stored model differs from the
+current config.
+
+> **Scope note.** This section is about the **RAG embedding
+> pipeline only** — the short-text vectors used for semantic search
+> and the link graph. The LLM that writes paper summaries during
+> `kb-importer --fulltext` is a separate setup configured through
+> `kb-importer.yaml` and the `--fulltext-provider` / `--fulltext-model`
+> CLI flags. Changing an embedding provider here never affects
+> fulltext-summary behavior.
+
+### OpenAI (default)
+
+```yaml
+# <workspace>/.ee-kb-tools/config/kb-mcp.yaml
+embeddings:
+  provider: openai
+  # model: text-embedding-3-small        # 1536 dim, $0.02/1M tokens
+```
+
+```bash
+# in ~/.bashrc
+export OPENAI_API_KEY=sk-...
+```
+
+### OpenRouter (new in 1.0)
+
+OpenRouter (https://openrouter.ai) is an OpenAI-compatible router
+to many upstream embedding providers behind one API key. By default
+we route to OpenAI's text-embedding-3-small (same vectors, same
+1536 dim — useful when a user already has OPENROUTER_API_KEY but
+not OPENAI_API_KEY).
+
+```yaml
+embeddings:
+  provider: openrouter
+  # model: openai/text-embedding-3-small   # default
+  #
+  # Other OpenRouter embedding models (see the /models?modality=embeddings
+  # catalog for current availability and pricing):
+  #   openai/text-embedding-3-large        # 3072 dim — requires dim:
+  #                                        #   rebuild; see note below
+  #   voyage-ai/voyage-3                   # 1024 dim
+  #   voyage-ai/voyage-3-large             # 1024 dim
+```
+
+```bash
+# in ~/.bashrc
+export OPENROUTER_API_KEY=sk-or-...
+```
+
+The stored `papers.embedding_model` gets a `openrouter/` prefix
+when you route via OpenRouter (e.g.
+`openrouter/openai/text-embedding-3-small`), so switching between
+direct OpenAI and OpenRouter triggers a re-embed rather than
+silently reusing vectors that could diverge if either side changes.
+
+### Gemini
 
 ```bash
 pip install -e "./kb_mcp[gemini]"
+```
 
-# <workspace>/.ee-kb-tools/config/kb-mcp.yaml
-cat > <workspace>/.ee-kb-tools/config/kb-mcp.yaml <<EOF
+```yaml
 embeddings:
   provider: gemini
-EOF
+  # model: gemini-embedding-001        # 1536 dim via MRL truncation
 ```
-
-API keys live in your shell rc (`~/.bashrc` / `~/.zshrc`):
 
 ```bash
-export OPENAI_API_KEY=sk-...
+# in ~/.bashrc
 export GEMINI_API_KEY=...
 ```
-
-Both providers output 1536-dim vectors by default (Gemini via MRL
-truncation), so switching doesn't require rebuilding the vec0 table.
-The stored `embedding_model` column in `papers` records which model
-produced each row; `kb-mcp index` re-embeds any paper whose model
-differs from the current configuration.
 
 ## Citation edges (Phase 4)
 
@@ -162,38 +214,25 @@ Cache at `<kb_root>/.kb-mcp/citations/<paper-key>.json`. For 1200
 papers: ~20 min on first run, zero cost with the Semantic Scholar
 free tier. See the `kb_citations/` package for details.
 
-## Embedding setup (Phase 2b)
+## Embedding: operational notes
 
-The vector tools need an OpenAI API key. Without one, `kb-mcp` still
-works — vector-backed tools gracefully degrade (hybrid search → pure
-FTS; related_papers → helpful error).
+If no embedding provider is configured (or the API key env var isn't
+set), `kb-mcp` still works — vector-backed tools gracefully degrade
+(`search_papers_hybrid` falls back to pure FTS; `related_papers`
+returns a helpful error). Only the semantic layer disappears; the
+filesystem / DB / link-graph tools keep working.
 
-Set the key as an environment variable:
+**Cost expectation** (OpenAI text-embedding-3-small, direct or via
+OpenRouter): ~$0.08 one-time for 1200 papers with summaries.
+Incremental re-index cost is trivial (embedding only changed
+papers). Each `search_papers_hybrid` call embeds the query
+(~10 tokens, ~$0.0000002).
 
-```bash
-export OPENAI_API_KEY=sk-...
-```
-
-Then configure `<workspace>/.ee-kb-tools/config/kb-mcp.yaml`:
-
-```yaml
-kb_root: ~/code/ee-kb
-embeddings:
-  enabled: true
-  provider: openai
-  model: text-embedding-3-small    # 1536 dim, $0.02/1M tokens
-  api_key_env: OPENAI_API_KEY
-  batch_size: 100
-```
-
-**Cost expectation**: ~$0.08 one-time for 1200 papers with summaries.
-Incremental re-index cost is trivial (embedding only changed papers).
-Each `search_papers_hybrid` call embeds the query (~10 tokens,
-~$0.0000002).
-
-To switch to `text-embedding-3-large` (3072 dim, ~6× cost): you must
-delete `.kb-mcp/index.sqlite` and rebuild, because the vec0 dimension
-is compile-time fixed in the schema.
+**Switching to a higher-dim model** (e.g. `text-embedding-3-large`
+at 3072 dim): you must delete `.kb-mcp/index.sqlite` and rebuild,
+because the vec0 column dimension is compile-time fixed in the
+schema. Use `kb-mcp reindex --force --provider ... --model ...
+--dim <N>` to drive the rebuild.
 
 ## CLI subcommands
 

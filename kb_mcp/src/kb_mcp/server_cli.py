@@ -104,12 +104,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_rei.add_argument(
         "--provider", default=None,
         choices=list(SUPPORTED_PROVIDERS),
-        help="Override embeddings.provider for this rebuild.",
+        help="Override embeddings.provider for this rebuild. "
+             "Choices: openai, gemini, openrouter.",
     )
     p_rei.add_argument(
         "--model", default=None,
-        help="Override embeddings.model for this rebuild "
-             "(e.g. text-embedding-3-large).",
+        help="Override embeddings.model for this rebuild. Examples: "
+             "text-embedding-3-large (openai), "
+             "openai/text-embedding-3-small (openrouter), "
+             "gemini-embedding-001 (gemini).",
     )
     p_rei.add_argument(
         "--dim", type=_positive_int, default=None,

@@ -137,10 +137,33 @@ python3 scripts/check_cross_module_imports.py
 
 ## Releasing
 
-Before producing a release zip or pushing to a public repo:
+**Pre-release flow for a 1.x tag** (Production/Stable classifier,
+git tag that will be pushed):
 
-1. Bump `VERSION` at repo root.
+1. Bump `VERSION` at the repo root.
 2. Update `__version__` in each package's `__init__.py` to match.
-3. Add a section to `CHANGELOG.md` summarising the window.
-4. Run all 5 checks above. Commit the release with message
-   `release: vX.Y`.
+3. Update the five `kb-*==<version>` inter-package pins in every
+   package's `pyproject.toml` (kb_write/kb_mcp/kb_importer/kb_citations
+   pin `kb-core==`; kb_importer/kb_mcp pin `kb-write==`; kb_citations
+   pins `kb-mcp==`). `scripts/check_package_consistency.py` enforces
+   these agree — run it to verify.
+4. Add a CHANGELOG entry summarising the window. Record that the
+   full-check script ran; a public 1.x tag must not ship without
+   that entry.
+5. Run the **full pre-release check battery**:
+
+   ```bash
+   scripts/pre_release_full_check.sh
+   ```
+
+   This runs: lints, byte-compile, unit tests, E2E, post-install
+   smoke, and the release zip build. All six must be green.
+
+6. Commit with message `release: X.Y.Z — <one-line summary>` (or
+   `bump A.B.C → X.Y.Z: ...` for a non-release bump).
+
+**For in-progress dev bumps** (no public tag, working toward a
+release): `scripts/make_release.sh` alone is fine — it runs the
+lint gates and builds a zip, but skips the slower test suites.
+The full script is required before any public Production/Stable
+claim.

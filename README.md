@@ -97,10 +97,23 @@ embedding provider extras and skip the rest.
 See [`kb_write/AGENT-WRITE-RULES.md`](kb_write/AGENT-WRITE-RULES.md)
 for the normative rules every agent must follow.
 
-## What's in this version (Phase 4 — v26)
+### Two LLM configurations, never mixed
 
-**v26 breaking change — data model refactor (no auto-migration).**
-The KB directory layout was reorganised so that:
+The toolchain calls LLMs in two very different places, and the two
+configurations are deliberately separate:
+
+| Purpose | Component | Configured in | Controlling flags / vars |
+|---------|-----------|---------------|--------------------------|
+| **RAG / vector index** (short-text embeddings for semantic search + graph) | `kb-mcp` | `.ee-kb-tools/config/kb-mcp.yaml` `embeddings:` section | `OPENAI_API_KEY` / `OPENROUTER_API_KEY` / `GEMINI_API_KEY`; `kb-mcp reindex --provider/--model/--dim` |
+| **Paper fulltext summarization** (7-section JSON summary from PDF) | `kb-importer --fulltext` | `.ee-kb-tools/config/kb-importer.yaml` + CLI flags | `--fulltext-provider {gemini,openai,deepseek}`, `--fulltext-model`, `--fulltext-max-tokens` |
+
+Changing the embedding provider never alters fulltext-summary
+behavior, and vice versa — they don't share config keys. If you
+want OpenRouter for both, set the two sections independently.
+
+## Architecture
+
+**Data model.** The KB directory layout:
 
 ```
 ee-kb/

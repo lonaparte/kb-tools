@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "kb-importer"
-version = "1.0.0"
+version = "1.1.0"
 description = "Translate a Zotero library into KB markdown files via the Zotero local API."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -12,7 +12,7 @@ license = { text = "MIT" }
 authors = [{ name = "ee-kb" }]
 keywords = ["zotero", "bibliography", "markdown", "llm", "pdf"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Environment :: Console",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
@@ -28,9 +28,9 @@ classifiers = [
     "Topic :: Scientific/Engineering",
 ]
 dependencies = [
-    "kb-core==1.0.0",
+    "kb-core==1.1.0",
     "pyzotero>=1.5.20",
-    "python-frontmatter>=1.0.0",
+    "python-frontmatter>=1.1.0",
     "markdownify>=0.11.6",
     "PyYAML>=6.0",
     # Hard dep: kb_importer writes every md through kb_write.atomic
@@ -40,7 +40,7 @@ dependencies = [
     # installed. The version is pinned loosely to the same v26
     # bundle release; workspace-consistency lint enforces the
     # actual VERSION match.
-    "kb-write==1.0.0",
+    "kb-write==1.1.0",
 ]
 
 [project.scripts]
