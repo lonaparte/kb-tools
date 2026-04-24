@@ -159,8 +159,14 @@ class OpenRouterEmbeddingProvider(OpenAIEmbeddingProvider):
     differences are:
 
     - Default base URL: `https://openrouter.ai/api/v1`
-    - Default env var: `OPENROUTER_API_KEY` (not OPENAI_API_KEY — so
-      a user can keep both active without conflict)
+    - Default env var: `OPENROUTER_EMBEDDING_API_KEY` with fallback
+      to `OPENROUTER_API_KEY`. Rationale: kb-importer's fulltext
+      pipeline uses `OPENROUTER_API_KEY`; splitting the embedding
+      key lets users point the two pipelines at different
+      OpenRouter accounts (e.g. one billed per-project, one per-
+      person) — but single-key users who only set
+      `OPENROUTER_API_KEY` get both working for free via the
+      fallback.
     - Model IDs use OpenRouter's `<vendor>/<model>` naming, e.g.
       `openai/text-embedding-3-small` or `voyage-ai/voyage-3`.
 
@@ -174,18 +180,40 @@ class OpenRouterEmbeddingProvider(OpenAIEmbeddingProvider):
 
     DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
     DEFAULT_MODEL = "openai/text-embedding-3-small"
+    # Embedding-specific key tried first; falls back to the shared
+    # OpenRouter key if the specific one isn't in the environment.
+    DEFAULT_API_KEY_ENV = "OPENROUTER_EMBEDDING_API_KEY"
+    FALLBACK_API_KEY_ENV = "OPENROUTER_API_KEY"
 
     def __init__(
         self,
         model: str = DEFAULT_MODEL,
-        api_key_env: str = "OPENROUTER_API_KEY",
+        api_key_env: str = DEFAULT_API_KEY_ENV,
         base_url: str | None = None,
         *,
         dim_override: int | None = None,
     ):
+        # If the specific embedding-key env var is unset but the
+        # general OPENROUTER_API_KEY is, silently use it. This is
+        # the "I only have one OpenRouter key" path, which we want
+        # to be zero-friction. Users who explicitly set
+        # api_key_env to something else (via kb-mcp.yaml) skip the
+        # fallback — they opted out of auto-sharing.
+        effective_env = api_key_env
+        if (
+            api_key_env == self.DEFAULT_API_KEY_ENV
+            and not os.environ.get(api_key_env, "").strip()
+            and os.environ.get(self.FALLBACK_API_KEY_ENV, "").strip()
+        ):
+            log.info(
+                "%s not set; using %s (fallback) for OpenRouter embedding",
+                self.DEFAULT_API_KEY_ENV, self.FALLBACK_API_KEY_ENV,
+            )
+            effective_env = self.FALLBACK_API_KEY_ENV
+
         super().__init__(
             model=model,
-            api_key_env=api_key_env,
+            api_key_env=effective_env,
             base_url=base_url or self.DEFAULT_BASE_URL,
             dim_override=dim_override,
         )
@@ -377,10 +405,17 @@ def build_from_config(cfg) -> EmbeddingProvider | None:
 
     provider_name = getattr(cfg, "embedding_provider", "openai").lower()
 
+    # `getattr(..., default)` returns the default only when the
+    # attribute is MISSING. load_config always sets
+    # `cfg.embedding_model` but it may be None (user left `model:`
+    # out of the YAML and _resolve_embedding_model returned None
+    # for a newly-added provider before the dispatch table caught
+    # up). Use `getattr(...) or <fallback>` to catch both cases.
     if provider_name == "openai":
         try:
             return OpenAIEmbeddingProvider(
-                model=getattr(cfg, "embedding_model", "text-embedding-3-small"),
+                model=(getattr(cfg, "embedding_model", None)
+                       or "text-embedding-3-small"),
                 api_key_env=getattr(cfg, "openai_api_key_env", "OPENAI_API_KEY"),
                 base_url=getattr(cfg, "openai_base_url", None),
             )
@@ -391,7 +426,8 @@ def build_from_config(cfg) -> EmbeddingProvider | None:
     if provider_name == "gemini":
         try:
             return GeminiEmbeddingProvider(
-                model=getattr(cfg, "embedding_model", "gemini-embedding-001"),
+                model=(getattr(cfg, "embedding_model", None)
+                       or "gemini-embedding-001"),
                 api_key_env=getattr(cfg, "gemini_api_key_env", "GEMINI_API_KEY"),
                 output_dim=getattr(cfg, "embedding_dim", None),
             )
@@ -402,12 +438,11 @@ def build_from_config(cfg) -> EmbeddingProvider | None:
     if provider_name == "openrouter":
         try:
             return OpenRouterEmbeddingProvider(
-                model=getattr(
-                    cfg, "embedding_model",
-                    OpenRouterEmbeddingProvider.DEFAULT_MODEL,
-                ),
+                model=(getattr(cfg, "embedding_model", None)
+                       or OpenRouterEmbeddingProvider.DEFAULT_MODEL),
                 api_key_env=getattr(
-                    cfg, "openrouter_api_key_env", "OPENROUTER_API_KEY",
+                    cfg, "openrouter_api_key_env",
+                    OpenRouterEmbeddingProvider.DEFAULT_API_KEY_ENV,
                 ),
                 base_url=getattr(cfg, "openrouter_base_url", None),
                 dim_override=getattr(cfg, "embedding_dim", None),

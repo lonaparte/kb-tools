@@ -113,17 +113,22 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
     )
     p.add_argument(
         "--fulltext-provider", default="gemini",
-        choices=["gemini", "openai", "deepseek"],
+        choices=["gemini", "openai", "deepseek", "openrouter"],
         help="LLM provider for summary generation. Default gemini "
-             "(free tier covers ~1000 papers/day).",
+             "(free tier covers ~1000 papers/day). openrouter "
+             "routes to many upstream models via OPENROUTER_API_KEY; "
+             "see --fulltext-model examples.",
     )
     p.add_argument(
         "--fulltext-model", default=None,
         help="Override default model for the chosen provider. "
              "Defaults: gemini→gemini-3.1-pro-preview, "
-             "openai→gpt-4o-mini, deepseek→deepseek-chat. "
+             "openai→gpt-4o-mini, deepseek→deepseek-chat, "
+             "openrouter→openai/gpt-4o-mini. "
              "For cheaper gemini runs, try gemini-3-flash-preview "
-             "or gemini-3.1-flash-lite.",
+             "or gemini-3.1-flash-lite. OpenRouter examples: "
+             "openai/gpt-4o, google/gemini-2.5-flash, "
+             "anthropic/claude-sonnet-4.5, deepseek/deepseek-chat.",
     )
     p.add_argument(
         "--fulltext-fallback-model", default="gemini-2.5-pro",

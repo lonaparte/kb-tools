@@ -210,9 +210,35 @@ kb-importer import papers ... --fulltext \
     --fulltext-provider openai \
     --fulltext-model gpt-4o-mini
 
+# Use OpenRouter to pick any catalog model (openai / anthropic /
+# google / deepseek / …) behind one API key.
+#   export OPENROUTER_API_KEY=sk-or-...
+kb-importer import papers ... --fulltext \
+    --fulltext-provider openrouter \
+    --fulltext-model anthropic/claude-sonnet-4.5
+
 # Inspect chapter detection for a long paper without LLM spend
 kb-importer import papers --fulltext --longform-dryrun --only-key BOOKKEY1
 ```
+
+**Supported providers + defaults**:
+
+| `--fulltext-provider` | Default model | API key env var | Notes |
+|-----------------------|---------------|-----------------|-------|
+| `gemini` (default) | `gemini-3.1-pro-preview` | `GEMINI_API_KEY` | Free tier ~1000 papers/day; daily-quota fallback on by default |
+| `openai` | `gpt-4o-mini` | `OPENAI_API_KEY` | |
+| `deepseek` | `deepseek-chat` | `DEEPSEEK_API_KEY` | Cheapest among direct-provider options |
+| `openrouter` | `openai/gpt-4o-mini` | `OPENROUTER_API_KEY` | Route to any OpenRouter catalog model — `anthropic/claude-sonnet-4.5`, `google/gemini-2.5-flash`, `deepseek/deepseek-chat`, etc. |
+
+**Note on RAG vs fulltext config**: this `--fulltext-provider`
+setting is completely independent from kb-mcp's RAG embedding
+provider. The embedding pipeline has its own `embeddings.provider`
+in `kb-mcp.yaml` with its own supported providers (openai / gemini /
+openrouter) and its own env vars. OpenRouter specifically uses
+`OPENROUTER_API_KEY` here and `OPENROUTER_EMBEDDING_API_KEY` on the
+embedding side — different keys for different pipelines by default,
+though a single `OPENROUTER_API_KEY` works for both via embedding-
+side fallback.
 
 **Gemini daily-quota fallback** (default on):
 

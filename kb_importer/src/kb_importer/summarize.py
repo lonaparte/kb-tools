@@ -208,11 +208,20 @@ class OpenAIChatProvider:
     """OpenAI-compatible chat completion. Works out of the box for:
     - OpenAI (api.openai.com)
     - DeepSeek (api.deepseek.com, same wire format)
+    - OpenRouter (openrouter.ai/api/v1, same wire format +
+      optional HTTP-Referer / X-Title headers for ranking)
     - Any OpenAI-compatible gateway (Together, Groq, vLLM, ...)
 
     DeepSeek reuse: set base_url="https://api.deepseek.com/v1" and
     model="deepseek-chat". Its `gpt-4o-mini`-equivalent pricing is
     lower than OpenAI's; for summarization volume it saves real money.
+
+    OpenRouter reuse: set base_url="https://openrouter.ai/api/v1"
+    and model="openai/gpt-4o-mini" (or any other OpenRouter-catalog
+    ID). One key unlocks many upstream models; useful when you want
+    OpenAI-flavoured chat behavior but pay through OpenRouter.
+    `extra_headers` carries OpenRouter's optional `HTTP-Referer` /
+    `X-Title` for opt-in attribution.
     """
 
     def __init__(
@@ -222,11 +231,13 @@ class OpenAIChatProvider:
         model: str,
         base_url: str = "https://api.openai.com/v1",
         name: str = "openai",
+        extra_headers: dict[str, str] | None = None,
     ):
         self.name = name
         self.model = model
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
+        self._extra_headers = dict(extra_headers or {})
 
     def complete(
         self,
@@ -247,13 +258,18 @@ class OpenAIChatProvider:
             "max_tokens": max_output_tokens,
             "temperature": temperature,
         }).encode("utf-8")
+        headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json",
+        }
+        # Caller-supplied headers override the defaults above only if
+        # they deliberately collide; normally these are attribution-
+        # only (HTTP-Referer / X-Title for OpenRouter ranking).
+        headers.update(self._extra_headers)
         req = urllib.request.Request(
             f"{self._base_url}/chat/completions",
             data=body,
-            headers={
-                "Authorization": f"Bearer {self._api_key}",
-                "Content-Type": "application/json",
-            },
+            headers=headers,
             method="POST",
         )
         try:
@@ -563,9 +579,47 @@ def build_provider_from_env(
             base_url="https://api.deepseek.com/v1",
             name="deepseek",
         )
+    if p == "openrouter":
+        # OpenRouter (https://openrouter.ai) routes chat requests to
+        # many upstream providers. Wire format = OpenAI, so we reuse
+        # OpenAIChatProvider with an overriden base_url.
+        #
+        # Default model: openai/gpt-4o-mini — cheap, fast, reliably
+        # JSON-capable (the 7-section summarizer prompt expects JSON
+        # back). Override with --fulltext-model for other catalog
+        # entries, e.g. google/gemini-2.5-flash,
+        # anthropic/claude-sonnet-4.5, deepseek/deepseek-chat.
+        #
+        # Shares `OPENROUTER_API_KEY` with the kb-mcp embedding
+        # provider on purpose — one key covers both domains. The
+        # two config surfaces stay independent, so you can use
+        # OpenRouter for fulltext while keeping embeddings on
+        # direct OpenAI (or vice versa).
+        key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+        if not key:
+            raise SummarizerError(
+                "OPENROUTER_API_KEY not set. Get a key at "
+                "https://openrouter.ai/keys and put "
+                "`export OPENROUTER_API_KEY=sk-or-...` in your "
+                "shell rc."
+            )
+        # Optional attribution headers per OpenRouter docs. Surfaces
+        # the project on their public leaderboard; safe to omit and
+        # they don't affect routing.
+        extra_headers = {
+            "HTTP-Referer": "https://github.com/lichengsheng/ee-kb-tools",
+            "X-Title": "ee-kb-tools",
+        }
+        return OpenAIChatProvider(
+            api_key=key,
+            model=model or "openai/gpt-4o-mini",
+            base_url="https://openrouter.ai/api/v1",
+            name="openrouter",
+            extra_headers=extra_headers,
+        )
     raise SummarizerError(
         f"unknown summarizer provider: {provider!r}. "
-        f"supported: gemini | openai | deepseek"
+        f"supported: gemini | openai | deepseek | openrouter"
     )
 
 

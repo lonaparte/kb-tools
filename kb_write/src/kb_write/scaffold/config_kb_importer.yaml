@@ -24,5 +24,26 @@ zotero:
   # Env var that holds your Zotero API key (only used in web mode).
   api_key_env: ZOTERO_API_KEY
 
+# Fulltext summarization config is primarily driven by CLI flags
+# (`--fulltext-provider`, `--fulltext-model`, `--fulltext-max-tokens`).
+# This section is intentionally minimal — most runs are one-off CLI
+# invocations, not long-lived server state.
+#
+# Supported providers (see `kb-importer import papers --help`):
+#   gemini     (default) — GEMINI_API_KEY. Free tier covers
+#                          ~1000 papers/day at 3.1-pro-preview.
+#   openai                — OPENAI_API_KEY. gpt-4o-mini by default.
+#   deepseek              — DEEPSEEK_API_KEY. deepseek-chat.
+#   openrouter            — OPENROUTER_API_KEY. Routes to any
+#                           OpenRouter-catalog model; default
+#                           openai/gpt-4o-mini. Use this to try
+#                           claude-sonnet-4.5 / gemini-2.5-flash /
+#                           other vendors without per-provider
+#                           accounts.
+#
+# kb-mcp's RAG embedding pipeline is a completely separate
+# configuration — see `.ee-kb-tools/config/kb-mcp.yaml`. The two
+# never share state; changing one does not affect the other.
+
 logging:
   level: info

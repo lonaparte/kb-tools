@@ -62,11 +62,12 @@ embeddings:
 
   # Env var NAMES (not values). Put the actual keys in ~/.bashrc:
   #   export OPENAI_API_KEY=sk-...
-  #   export OPENROUTER_API_KEY=sk-or-...
   #   export GEMINI_API_KEY=...
+  #   export OPENROUTER_EMBEDDING_API_KEY=sk-or-...    # embedding-specific
+  #   export OPENROUTER_API_KEY=sk-or-...              # fulltext / fallback
   openai_api_key_env: OPENAI_API_KEY
-  openrouter_api_key_env: OPENROUTER_API_KEY
   gemini_api_key_env: GEMINI_API_KEY
+  openrouter_api_key_env: OPENROUTER_EMBEDDING_API_KEY
 
   # ----------------------------------------------------------------
   # OpenRouter
@@ -76,12 +77,19 @@ embeddings:
   #
   # openrouter_base_url: https://openrouter.ai/api/v1
   #
+  # Env var split: embedding uses OPENROUTER_EMBEDDING_API_KEY by
+  # default, kb-importer's fulltext pipeline uses OPENROUTER_API_KEY.
+  # This lets you point the two pipelines at different OpenRouter
+  # accounts (different billing / different rate limits). If
+  # OPENROUTER_EMBEDDING_API_KEY is unset but OPENROUTER_API_KEY is,
+  # the embedding provider transparently falls back — so a single-
+  # key user only needs to export OPENROUTER_API_KEY.
+  #
   # Example: switch the whole RAG pipeline to OpenRouter →
   # OpenAI text-embedding-3-small (identical output to direct
   # OpenAI, billed through your OpenRouter account):
   #   provider: openrouter
   #   model: openai/text-embedding-3-small
-  #   # OPENROUTER_API_KEY must be set in your shell rc.
 
   # ----------------------------------------------------------------
   # OpenAI-compatible endpoints (non-OpenRouter)

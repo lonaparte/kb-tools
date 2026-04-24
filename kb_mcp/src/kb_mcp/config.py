@@ -142,7 +142,7 @@ class Config:
     openai_api_key_env: str = "OPENAI_API_KEY"
     openai_base_url: str | None = None
     gemini_api_key_env: str = "GEMINI_API_KEY"
-    openrouter_api_key_env: str = "OPENROUTER_API_KEY"
+    openrouter_api_key_env: str = "OPENROUTER_EMBEDDING_API_KEY"
     openrouter_base_url: str | None = None  # default resolves in the provider
     embedding_batch_size: int = 100
 
@@ -268,7 +268,7 @@ def load_config(
         openai_base_url=emb_cfg.get("openai_base_url"),
         gemini_api_key_env=str(emb_cfg.get("gemini_api_key_env", "GEMINI_API_KEY")),
         openrouter_api_key_env=str(
-            emb_cfg.get("openrouter_api_key_env", "OPENROUTER_API_KEY")
+            emb_cfg.get("openrouter_api_key_env", "OPENROUTER_EMBEDDING_API_KEY")
         ),
         openrouter_base_url=emb_cfg.get("openrouter_base_url"),
         embedding_batch_size=_parse_positive_int(

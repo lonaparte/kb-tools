@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "kb-core"
-version = "1.1.0"
+version = "1.2.0"
 description = "Shared contract layer (paths, workspace resolution, schema version) for the ee-kb toolchain."
 readme = "README.md"
 requires-python = ">=3.10"

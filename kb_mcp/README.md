@@ -168,9 +168,20 @@ embeddings:
 ```
 
 ```bash
-# in ~/.bashrc
-export OPENROUTER_API_KEY=sk-or-...
+# in ~/.bashrc — two env vars, embedding-specific first
+export OPENROUTER_EMBEDDING_API_KEY=sk-or-...   # used by kb-mcp embedding
+export OPENROUTER_API_KEY=sk-or-...             # used by kb-importer fulltext
 ```
+
+**Why two env vars?** Embedding (kb-mcp) uses
+`OPENROUTER_EMBEDDING_API_KEY`; fulltext summarization
+(kb-importer) uses `OPENROUTER_API_KEY`. The split lets you
+route the two pipelines at different OpenRouter accounts (e.g.
+one billed per-project, one shared). **Single-key convenience**:
+if `OPENROUTER_EMBEDDING_API_KEY` is unset but `OPENROUTER_API_KEY`
+is, the embedding side silently uses the shared key — you only
+need to export both variables when you actually want them
+different.
 
 The stored `papers.embedding_model` gets a `openrouter/` prefix
 when you route via OpenRouter (e.g.

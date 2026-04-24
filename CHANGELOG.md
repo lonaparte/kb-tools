@@ -5,6 +5,71 @@ All notable changes to ee-kb-tools.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is our own (calendar-ish, per-major-iteration).
 
+## [1.2.0] — 2026-04-24
+
+Extends OpenRouter support from the embedding pipeline (1.1.0) to
+also cover the fulltext summarization pipeline — so users can pick
+any OpenRouter-catalog model (anthropic/claude, google/gemini,
+deepseek/deepseek-chat, etc.) for paper summaries without managing
+per-provider accounts. Also splits the two OpenRouter env vars so
+embedding and fulltext can point at different OpenRouter accounts.
+
+### Added
+
+- **`kb-importer --fulltext-provider openrouter`** — new choice in
+  the fulltext summarizer. Default model `openai/gpt-4o-mini`;
+  override with `--fulltext-model <any catalog id>`. Examples in
+  `--help` and kb_importer/README.md: `openai/gpt-4o`,
+  `google/gemini-2.5-flash`, `anthropic/claude-sonnet-4.5`,
+  `deepseek/deepseek-chat`. Reads `OPENROUTER_API_KEY`.
+
+- **Optional `extra_headers` on `OpenAIChatProvider`** — lets the
+  OpenRouter branch set `HTTP-Referer` and `X-Title` headers per
+  OpenRouter docs (ee-kb-tools attribution on their public
+  leaderboard; safe to omit; doesn't affect routing).
+
+- **Env-var split for OpenRouter** between the two pipelines:
+  - `OPENROUTER_EMBEDDING_API_KEY` — kb-mcp embedding (RAG).
+  - `OPENROUTER_API_KEY` — kb-importer fulltext summary.
+
+  The two pipelines pick these up by default via their respective
+  config defaults (`openrouter_api_key_env` in kb-mcp.yaml).
+  **Single-key convenience**: if `OPENROUTER_EMBEDDING_API_KEY` is
+  unset but `OPENROUTER_API_KEY` is, the embedding provider
+  transparently falls back — one key works for both pipelines.
+  Users who explicitly set `openrouter_api_key_env` to a custom
+  value opt out of the fallback. Logged at INFO so the behavior
+  is visible.
+
+### Changed
+
+- Root README's "Two LLM configurations" table now lists the env
+  var names per provider so the separation (and the OpenRouter
+  split) is visible at a glance.
+
+- `kb_importer.yaml` scaffold grew a pointer block documenting the
+  four fulltext providers and their env vars, plus an explicit
+  note that the RAG embedding pipeline is configured elsewhere.
+
+- `kb_mcp.yaml` scaffold documents the env-var split + single-key
+  fallback with an inline explanation.
+
+### Verification
+
+- Lints clean; byte-compile clean on all five packages.
+- 425/425 unit tests (+10 over 1.1.0: 7 new
+  `test_summarize_openrouter` cases covering factory dispatch,
+  missing-key error, no-leak-from-embedding-env, base URL,
+  attribution headers, unknown-provider message; +3 new
+  `test_embedding_openrouter` cases covering the env-var fallback
+  behavior and the custom-env opt-out).
+- 46/46 e2e.
+- post-install smoke clean (Gemini embed OK; OpenAI + S2 expected
+  skip for missing key / rate limit).
+- Fresh-venv pip-wheel install: `kb-importer import papers
+  --fulltext-provider openrouter --help` lists the new choice;
+  `kb-mcp` embedding picks up both env-var paths correctly.
+
 ## [1.1.0] — 2026-04-24
 
 First post-1.0 minor release. Adds a new embedding provider

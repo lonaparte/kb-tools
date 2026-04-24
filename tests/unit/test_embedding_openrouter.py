@@ -23,7 +23,7 @@ class _FakeCfg:
         self.embedding_model = kw.get("embedding_model", None)
         self.embedding_dim = kw.get("embedding_dim", None)
         self.openrouter_api_key_env = kw.get(
-            "openrouter_api_key_env", "OPENROUTER_API_KEY"
+            "openrouter_api_key_env", "OPENROUTER_EMBEDDING_API_KEY"
         )
         self.openrouter_base_url = kw.get("openrouter_base_url", None)
 
@@ -35,6 +35,8 @@ def test_openrouter_in_supported_providers():
 def test_openrouter_defaults():
     assert OpenRouterEmbeddingProvider.DEFAULT_MODEL == "openai/text-embedding-3-small"
     assert OpenRouterEmbeddingProvider.DEFAULT_BASE_URL == "https://openrouter.ai/api/v1"
+    assert OpenRouterEmbeddingProvider.DEFAULT_API_KEY_ENV == "OPENROUTER_EMBEDDING_API_KEY"
+    assert OpenRouterEmbeddingProvider.FALLBACK_API_KEY_ENV == "OPENROUTER_API_KEY"
 
 
 def test_openrouter_default_model_resolves():
@@ -48,8 +50,48 @@ def test_openrouter_respects_explicit_model():
 def test_missing_api_key_returns_none_not_raise(monkeypatch):
     """Setup failure must not abort indexing of non-embedded data."""
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_EMBEDDING_API_KEY", raising=False)
     cfg = _FakeCfg(embedding_provider="openrouter",
                    embedding_model="openai/text-embedding-3-small")
+    assert build_from_config(cfg) is None
+
+
+def test_embedding_key_takes_precedence_over_fallback(monkeypatch):
+    """If both OPENROUTER_EMBEDDING_API_KEY and OPENROUTER_API_KEY
+    are set, the embedding-specific one wins — lets users route
+    embedding and fulltext to different OpenRouter accounts."""
+    monkeypatch.setenv("OPENROUTER_EMBEDDING_API_KEY", "sk-or-emb-specific")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-fulltext-shared")
+    prov = OpenRouterEmbeddingProvider()
+    # The effective key used is not exposed directly; we can at
+    # least verify the provider constructs without falling back.
+    # (A direct check of the underlying OpenAI client's key would
+    # inspect private state; keep this test to construction-only.)
+    assert prov is not None
+
+
+def test_fallback_to_generic_openrouter_key(monkeypatch):
+    """When only OPENROUTER_API_KEY is set (single-key user),
+    embedding construction still succeeds via the fallback."""
+    monkeypatch.delenv("OPENROUTER_EMBEDDING_API_KEY", raising=False)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-generic")
+    # Must not raise.
+    prov = OpenRouterEmbeddingProvider()
+    assert prov.model_name.startswith("openrouter/")
+
+
+def test_no_fallback_when_user_picks_custom_env_var(monkeypatch):
+    """If the user explicitly sets `openrouter_api_key_env` to a
+    custom name (via kb-mcp.yaml), the fallback to
+    OPENROUTER_API_KEY should NOT kick in — they opted out of
+    auto-sharing."""
+    monkeypatch.delenv("MY_CUSTOM_EMBED_KEY", raising=False)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-generic")
+    cfg = _FakeCfg(
+        embedding_provider="openrouter",
+        openrouter_api_key_env="MY_CUSTOM_EMBED_KEY",
+    )
+    # Custom env not set → provider build returns None (graceful).
     assert build_from_config(cfg) is None
 
 

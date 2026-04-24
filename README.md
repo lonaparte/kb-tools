@@ -102,14 +102,21 @@ for the normative rules every agent must follow.
 The toolchain calls LLMs in two very different places, and the two
 configurations are deliberately separate:
 
-| Purpose | Component | Configured in | Controlling flags / vars |
-|---------|-----------|---------------|--------------------------|
-| **RAG / vector index** (short-text embeddings for semantic search + graph) | `kb-mcp` | `.ee-kb-tools/config/kb-mcp.yaml` `embeddings:` section | `OPENAI_API_KEY` / `OPENROUTER_API_KEY` / `GEMINI_API_KEY`; `kb-mcp reindex --provider/--model/--dim` |
-| **Paper fulltext summarization** (7-section JSON summary from PDF) | `kb-importer --fulltext` | `.ee-kb-tools/config/kb-importer.yaml` + CLI flags | `--fulltext-provider {gemini,openai,deepseek}`, `--fulltext-model`, `--fulltext-max-tokens` |
+| Purpose | Component | Configured in | Provider choices | API key env var |
+|---------|-----------|---------------|------------------|-----------------|
+| **RAG / vector index** (short-text embeddings for semantic search + graph) | `kb-mcp` | `.ee-kb-tools/config/kb-mcp.yaml` `embeddings:` section | `openai`, `gemini`, `openrouter` | `OPENAI_API_KEY` / `GEMINI_API_KEY` / `OPENROUTER_EMBEDDING_API_KEY` (→ falls back to `OPENROUTER_API_KEY`) |
+| **Paper fulltext summarization** (7-section JSON summary from PDF) | `kb-importer --fulltext` | `.ee-kb-tools/config/kb-importer.yaml` + CLI flags | `gemini`, `openai`, `deepseek`, `openrouter` | `GEMINI_API_KEY` / `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` / `OPENROUTER_API_KEY` |
 
 Changing the embedding provider never alters fulltext-summary
-behavior, and vice versa — they don't share config keys. If you
-want OpenRouter for both, set the two sections independently.
+behavior, and vice versa — they don't share config keys.
+
+**OpenRouter specifically uses two different env vars on purpose**:
+`OPENROUTER_EMBEDDING_API_KEY` for kb-mcp's embedding pipeline,
+`OPENROUTER_API_KEY` for kb-importer's fulltext summarizer. Lets
+you route the two pipelines at different OpenRouter accounts
+(different billing / different rate limits). Single-key users who
+only set `OPENROUTER_API_KEY` get both working — the embedding side
+falls back transparently when the embedding-specific var is unset.
 
 ## Architecture
 
