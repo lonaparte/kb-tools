@@ -26,23 +26,7 @@ import logging
 import sys
 
 from ..config import Config
-from ..md_builder import (
-    build_note_md,
-    build_paper_md,
-    note_md_path,
-    paper_md_path,
-)
-from ..md_io import atomic_write, extract_preserved
-from ..state import (
-    # v0.29.0: archive_attachments no longer imported — auto-archive
-    # was removed. find_pdf still resolves both storage/ and
-    # storage/_archived/ for read-compat with pre-0.29 KBs.
-    find_pdf,
-    imported_note_keys,
-    paper_is_imported,
-    scan_attachments,
-)
-from ..zotero_reader import ZoteroItem, ZoteroReader
+from ..zotero_reader import ZoteroReader
 from ._shared import _positive_int
 
 log = logging.getLogger(__name__)

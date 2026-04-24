@@ -11,7 +11,6 @@ differences.
 """
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Iterable
 
 from ..atomic import write_lock

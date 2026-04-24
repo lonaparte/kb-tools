@@ -12,7 +12,6 @@ embedding unavailable), returns a helpful error.
 from __future__ import annotations
 
 import json
-import struct
 
 from ..store import Store
 

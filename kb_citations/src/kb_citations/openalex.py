@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Iterable, Sequence
+from typing import Sequence
 
 import httpx
 

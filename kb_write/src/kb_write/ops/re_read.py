@@ -31,7 +31,7 @@ from pathlib import Path
 
 from ..config import WriteContext
 from ..selectors import (
-    PaperInfo, REGISTRY as SELECTOR_REGISTRY, DEFAULT_SELECTOR_NAME,
+    REGISTRY as SELECTOR_REGISTRY, DEFAULT_SELECTOR_NAME,
 )
 from .re_read_sources import source_papers, source_storage, SOURCES
 

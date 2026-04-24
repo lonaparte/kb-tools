@@ -14,7 +14,7 @@ from pathlib import Path
 
 import frontmatter
 
-from ..paths import PathError, safe_resolve, to_relative
+from ..paths import PathError, safe_resolve
 
 
 # Max files to return. Protects Claude's context window from huge KBs.

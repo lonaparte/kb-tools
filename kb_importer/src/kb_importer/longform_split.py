@@ -30,7 +30,6 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
-from pathlib import Path
 
 
 log = logging.getLogger(__name__)

@@ -18,7 +18,7 @@ from ..md_builder import (
 )
 from ..md_io import atomic_write, extract_preserved
 from ..state import find_pdf
-from ..zotero_reader import ZoteroItem, ZoteroReader
+from ..zotero_reader import ZoteroReader
 
 log = logging.getLogger(__name__)
 

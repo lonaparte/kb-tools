@@ -13,7 +13,6 @@ wrappers — they're the AI's only signal for *when* to use each tool.
 """
 from __future__ import annotations
 
-import argparse
 import logging
 import os
 import sys
@@ -25,7 +24,7 @@ from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 
 from .config import Config, ConfigError, load_config
-from .embedding import build_from_config, SUPPORTED_PROVIDERS
+from .embedding import build_from_config
 from .indexer import Indexer
 from .store import Store, default_db_path
 from .tools.find import find_paper_by_key_impl
@@ -47,7 +46,6 @@ from .tools.citation_stats import (
     dangling_references_impl,
 )
 from .server_cli import (
-    _positive_int,
     _setup_logging,
     build_parser,
     _cmd_fetch_citations_impl,

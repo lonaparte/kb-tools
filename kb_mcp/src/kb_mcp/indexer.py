@@ -34,8 +34,7 @@ from pathlib import Path
 import frontmatter
 
 from .paths import (
-    PAPERS_DIR, TOPICS_STANDALONE_DIR, TOPICS_AGENT_DIR, THOUGHTS_DIR,
-    ACTIVE_SUBDIRS, is_book_chapter_filename,
+    TOPICS_STANDALONE_DIR, TOPICS_AGENT_DIR, THOUGHTS_DIR, is_book_chapter_filename,
 )
 from .store import Store
 
@@ -55,8 +54,6 @@ from . import link_resolve as _link_resolve
 from ._indexer_helpers import (
     _extract_fulltext_body, _extract_abstract,
     _safe_int, _now_iso,
-    _split_fulltext_sections, _strip_frontmatter,
-    _clamp, _authors_flat, _vec_blob,
 )
 
 log = logging.getLogger(__name__)
@@ -68,7 +65,6 @@ log = logging.getLogger(__name__)
 # re-declared. Re-exported here for callers that `from
 # kb_mcp.indexer import FULLTEXT_START`.
 # ---------------------------------------------------------------------
-from kb_core import FULLTEXT_START, FULLTEXT_END
 
 
 @dataclass

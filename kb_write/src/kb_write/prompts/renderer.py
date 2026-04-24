@@ -11,9 +11,8 @@ any user-custom section appended AFTER the end marker.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from importlib import resources
-from pathlib import Path
 from typing import Sequence
 
 

@@ -48,7 +48,6 @@ the filesystem ordering matches chapter order.
 from __future__ import annotations
 
 import logging
-import re
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path

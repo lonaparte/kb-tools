@@ -25,11 +25,10 @@ deletes.
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
 
 from ..atomic import write_lock
 from ..config import WriteContext
-from ..git import auto_commit, commit_staged, is_git_repo
+from ..git import commit_staged, is_git_repo
 from ..paths import NodeAddress, parse_target
 from ..reindex import trigger_reindex
 from ..rules import RuleViolation

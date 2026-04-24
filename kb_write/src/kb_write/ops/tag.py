@@ -9,7 +9,7 @@ frontmatter field — never zotero_tags, never body, never AI zone.
 """
 from __future__ import annotations
 
-from ..atomic import write_lock, write_lock_paper
+from ..atomic import write_lock_paper
 from ..config import WriteContext
 from ..frontmatter import read_md, write_md, merge_kb_fields, remove_from_kb_list
 from ..git import auto_commit

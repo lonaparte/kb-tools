@@ -34,7 +34,6 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
-import frontmatter
 
 from .md_io import inject_fulltext
 

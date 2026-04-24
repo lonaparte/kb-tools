@@ -31,10 +31,8 @@ import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable
 
 from .cache import CitationCache
-from .provider import Reference
 from .resolver import LocalResolver
 
 

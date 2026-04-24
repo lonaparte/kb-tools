@@ -5,7 +5,7 @@ value-format check (kb_refs entries must pass validate_kb_ref_entry).
 """
 from __future__ import annotations
 
-from ..atomic import write_lock, write_lock_paper
+from ..atomic import write_lock_paper
 from ..config import WriteContext
 from ..frontmatter import read_md, write_md, merge_kb_fields, remove_from_kb_list
 from ..git import auto_commit

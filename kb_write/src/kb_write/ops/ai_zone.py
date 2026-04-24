@@ -39,7 +39,7 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 
-from ..atomic import atomic_write, write_lock, write_lock_paper
+from ..atomic import atomic_write, write_lock_paper
 from ..config import WriteContext
 from ..git import auto_commit
 from ..paths import NodeAddress, parse_target

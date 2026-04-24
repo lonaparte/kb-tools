@@ -37,12 +37,12 @@ from __future__ import annotations
 
 import logging
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import Callable
 
 from .config import CitationsContext
-from .provider import CitationProvider, normalize_doi
+from .provider import CitationProvider
 
 
 log = logging.getLogger(__name__)

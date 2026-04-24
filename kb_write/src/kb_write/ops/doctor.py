@@ -38,7 +38,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable
 
 import frontmatter
 
@@ -53,7 +52,6 @@ from ..zones import (
     AI_ZONE_START, AI_ZONE_END,
 )
 from ..prompts.renderer import render_all
-from ..paths import NodeAddress
 
 
 @dataclass

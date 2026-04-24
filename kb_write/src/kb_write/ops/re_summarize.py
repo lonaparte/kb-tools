@@ -43,11 +43,9 @@ Strict constraints:
 """
 from __future__ import annotations
 
-import json
 import logging
 import re
 from dataclasses import dataclass, field
-from datetime import date
 from pathlib import Path
 
 from ..atomic import atomic_write, assert_mtime_unchanged, write_lock
