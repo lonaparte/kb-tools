@@ -24,6 +24,7 @@ import json
 import logging
 import os
 import re
+import time
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -174,6 +175,44 @@ class QuotaExhaustedError(SummarizerError):
         self.model = model
 
 
+# ---------------------------------------------------------------------
+# Transient-error retry (1.3.1)
+#
+# Summarize's stdlib-urllib HTTP path (Gemini + OpenAI-compatible chat)
+# has historically had zero retry — a single DNS hiccup / reset
+# connection / 30s timeout would surface as SummarizerError and the
+# paper got skipped. Over a 1000-paper batch that adds up.
+#
+# Retry policy (deliberately conservative to avoid amplifying
+# upstream outages):
+#
+#   - Only retry on URLError / TimeoutError / HTTPError 5xx. HTTP 4xx
+#     (400 / 401 / 403 / 404) never retries — caller's input / auth
+#     is the problem, more attempts won't help.
+#   - HTTP 429 retries via the existing quota / retry_after path in
+#     the Gemini provider (not this generic helper).
+#   - 2 retries max with exponential backoff: ~1s, ~3s. Total extra
+#     delay on a fully failed triple is ~4s — tolerable per-paper
+#     cost, 3× the success rate on flaky networks.
+# ---------------------------------------------------------------------
+
+_DEFAULT_RETRIES = 2
+_BASE_BACKOFF_SEC = 1.0
+
+
+def _should_retry_http(e: "urllib.error.HTTPError") -> bool:
+    """5xx is server-side transient; retry it. Everything else is a
+    deterministic client-side issue (400) or a specialized flow
+    handled elsewhere (429 → Gemini quota path)."""
+    return 500 <= e.code < 600
+
+
+def _retry_sleep(attempt: int) -> None:
+    """Exponential backoff. attempt=0 → 1s, 1 → 3s, 2 → 9s.
+    (We only call with attempt in [0, 1] given _DEFAULT_RETRIES=2.)"""
+    time.sleep(_BASE_BACKOFF_SEC * (3 ** attempt))
+
+
 class LLMProvider(Protocol):
     """Minimal contract. Each provider wraps its own HTTP client.
     Returns raw completion text; parsing is the caller's job.
@@ -266,37 +305,68 @@ class OpenAIChatProvider:
         # they deliberately collide; normally these are attribution-
         # only (HTTP-Referer / X-Title for OpenRouter ranking).
         headers.update(self._extra_headers)
-        req = urllib.request.Request(
-            f"{self._base_url}/chat/completions",
-            data=body,
-            headers=headers,
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=120) as resp:
-                raw = resp.read().decode("utf-8")
-        except urllib.error.HTTPError as e:
-            detail = ""
+        # Retry loop for transient transport-level failures. HTTP 400
+        # and non-HTTP JSON decode errors bail out immediately; only
+        # URLError / TimeoutError / HTTP 5xx get retried.
+        last_err: Exception | None = None
+        for attempt in range(_DEFAULT_RETRIES + 1):
+            req = urllib.request.Request(
+                f"{self._base_url}/chat/completions",
+                data=body,
+                headers=headers,
+                method="POST",
+            )
             try:
-                detail = e.read().decode("utf-8", errors="replace")[:400]
-            except Exception:
-                pass
-            # 400 Bad Request: the request itself is broken (prompt
-            # too long, malformed JSON body, unsupported model, etc.).
-            # Retrying with the same input can't help; surface as
-            # BadRequestError so the classifier routes to
-            # `llm_bad_request` without message-matching.
-            if e.code == 400:
-                raise BadRequestError(
-                    f"{self.name} HTTP 400: {detail or e.reason}"
+                with urllib.request.urlopen(req, timeout=120) as resp:
+                    raw = resp.read().decode("utf-8")
+                break  # success
+            except urllib.error.HTTPError as e:
+                detail = ""
+                try:
+                    detail = e.read().decode("utf-8", errors="replace")[:400]
+                except Exception:
+                    pass
+                # 400: deterministic client error. No retry.
+                if e.code == 400:
+                    raise BadRequestError(
+                        f"{self.name} HTTP 400: {detail or e.reason}"
+                    ) from e
+                # 5xx: server-side transient; retry if budget left.
+                if _should_retry_http(e) and attempt < _DEFAULT_RETRIES:
+                    log.warning(
+                        "%s HTTP %s on attempt %d/%d; retrying",
+                        self.name, e.code, attempt + 1,
+                        _DEFAULT_RETRIES + 1,
+                    )
+                    last_err = e
+                    _retry_sleep(attempt)
+                    continue
+                raise SummarizerError(
+                    f"{self.name} HTTP {e.code}: {detail or e.reason}"
                 ) from e
+            except (urllib.error.URLError, TimeoutError) as e:
+                # DNS failure, connection reset, socket timeout — almost
+                # always transient. Retry if budget left.
+                if attempt < _DEFAULT_RETRIES:
+                    log.warning(
+                        "%s transport error on attempt %d/%d: %s; retrying",
+                        self.name, attempt + 1, _DEFAULT_RETRIES + 1, e,
+                    )
+                    last_err = e
+                    _retry_sleep(attempt)
+                    continue
+                reason = getattr(e, "reason", str(e))
+                raise SummarizerError(
+                    f"{self.name} network error after "
+                    f"{_DEFAULT_RETRIES + 1} attempts: {reason}"
+                ) from e
+        else:
+            # Loop exhausted without break — shouldn't happen because
+            # the last-iteration exception path raises, but guard
+            # defensively.
             raise SummarizerError(
-                f"{self.name} HTTP {e.code}: {detail or e.reason}"
-            ) from e
-        except urllib.error.URLError as e:
-            raise SummarizerError(
-                f"{self.name} network error: {e.reason}"
-            ) from e
+                f"{self.name} network error after retries: {last_err}"
+            ) from last_err
 
         try:
             data = json.loads(raw)
@@ -453,58 +523,80 @@ class GeminiProvider:
             "contents": [{"role": "user", "parts": [{"text": user}]}],
             "generationConfig": generation_config,
         }).encode("utf-8")
-        req = urllib.request.Request(
-            url,
-            data=body,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=120) as resp:
-                raw = resp.read().decode("utf-8")
-        except urllib.error.HTTPError as e:
-            detail = ""
+        # Transient-transport retry loop. Same policy as the
+        # OpenAI-compatible provider: retry URLError / TimeoutError /
+        # HTTP 5xx up to _DEFAULT_RETRIES times with exponential
+        # backoff; 400/404 (deterministic) and 429 (quota-specific,
+        # handled by fallback_state at a higher level) bail out
+        # immediately.
+        last_err: Exception | None = None
+        for attempt in range(_DEFAULT_RETRIES + 1):
+            req = urllib.request.Request(
+                url,
+                data=body,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
             try:
-                detail = e.read().decode("utf-8", errors="replace")[:400]
-            except Exception:
-                pass
-            # Classify quota exhaustion separately from other HTTP
-            # failures. Gemini returns 429 for both per-day (RPD) and
-            # per-minute (RPM) quotas; caller wants to distinguish
-            # because daily → switch model, per-minute → sleep+retry.
-            if e.code == 429 or "RESOURCE_EXHAUSTED" in detail:
-                quota_type = _classify_quota_kind(detail)
-                retry_after = _extract_retry_delay(detail)
-                raise QuotaExhaustedError(
-                    f"gemini quota exhausted ({quota_type}, "
-                    f"model={self.model}): {detail or 'HTTP 429'}",
-                    quota_type=quota_type,
-                    retry_after=retry_after,
-                    model=self.model,
-                ) from e
-            # v0.28.2: HTTP 400 (bad request) and 404 (model not
-            # found) are PERMANENT failures for this request —
-            # retrying the same input to the same model will always
-            # hit the same error. Distinguish them via BadRequestError
-            # so the importer's retry loop can short-circuit (don't
-            # re-call) AND, if the model itself is the problem (404 /
-            # "model not found" in the detail), also stop trying
-            # THIS MODEL for the rest of the batch. Pre-0.28.2, both
-            # were buried in a generic SummarizerError and the
-            # caller string-matched '400' at log time but didn't
-            # change scheduling. Reviewer flagged this as "分类但不
-            # 调度" — now the scheduler branch sees the right type.
-            if e.code in (400, 404):
-                raise BadRequestError(
+                with urllib.request.urlopen(req, timeout=120) as resp:
+                    raw = resp.read().decode("utf-8")
+                break  # success
+            except urllib.error.HTTPError as e:
+                detail = ""
+                try:
+                    detail = e.read().decode("utf-8", errors="replace")[:400]
+                except Exception:
+                    pass
+                # Classify quota exhaustion separately from other HTTP
+                # failures. Gemini returns 429 for both per-day (RPD) and
+                # per-minute (RPM) quotas; caller wants to distinguish
+                # because daily → switch model, per-minute → sleep+retry.
+                if e.code == 429 or "RESOURCE_EXHAUSTED" in detail:
+                    quota_type = _classify_quota_kind(detail)
+                    retry_after = _extract_retry_delay(detail)
+                    raise QuotaExhaustedError(
+                        f"gemini quota exhausted ({quota_type}, "
+                        f"model={self.model}): {detail or 'HTTP 429'}",
+                        quota_type=quota_type,
+                        retry_after=retry_after,
+                        model=self.model,
+                    ) from e
+                # v0.28.2: HTTP 400 (bad request) and 404 (model not
+                # found) are PERMANENT — no retry.
+                if e.code in (400, 404):
+                    raise BadRequestError(
+                        f"gemini HTTP {e.code}: {detail or e.reason}"
+                    ) from e
+                # 5xx: server-side transient; retry if budget left.
+                if _should_retry_http(e) and attempt < _DEFAULT_RETRIES:
+                    log.warning(
+                        "gemini HTTP %s on attempt %d/%d; retrying",
+                        e.code, attempt + 1, _DEFAULT_RETRIES + 1,
+                    )
+                    last_err = e
+                    _retry_sleep(attempt)
+                    continue
+                raise SummarizerError(
                     f"gemini HTTP {e.code}: {detail or e.reason}"
                 ) from e
+            except (urllib.error.URLError, TimeoutError) as e:
+                if attempt < _DEFAULT_RETRIES:
+                    log.warning(
+                        "gemini transport error on attempt %d/%d: %s; "
+                        "retrying", attempt + 1, _DEFAULT_RETRIES + 1, e,
+                    )
+                    last_err = e
+                    _retry_sleep(attempt)
+                    continue
+                reason = getattr(e, "reason", str(e))
+                raise SummarizerError(
+                    f"gemini network error after "
+                    f"{_DEFAULT_RETRIES + 1} attempts: {reason}"
+                ) from e
+        else:
             raise SummarizerError(
-                f"gemini HTTP {e.code}: {detail or e.reason}"
-            ) from e
-        except urllib.error.URLError as e:
-            raise SummarizerError(
-                f"gemini network error: {e.reason}"
-            ) from e
+                f"gemini network error after retries: {last_err}"
+            ) from last_err
 
         try:
             data = json.loads(raw)

@@ -5,6 +5,103 @@ All notable changes to ee-kb-tools.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is our own (calendar-ish, per-major-iteration).
 
+## [1.3.1] — 2026-04-24
+
+Robustness polish. Two reviewer-caught gaps in config parsing and
+LLM transport-error handling. No behavior changes for valid configs
+or stable networks — only the two error paths now produce actionable
+errors / retry transparently instead of bare Python tracebacks.
+
+### Fixed
+
+- **kb-mcp config nested sections must be mappings.** Pre-fix,
+  `kb_mcp.config.load_config()` validated the top-level YAML was a
+  mapping but then called `.get(...)` on `logging` / `embeddings` /
+  `store` without checking THEIR types. If a user wrote
+  `embeddings: false`, `logging: debug`, or
+  `store: [- journal_mode: wal]` (common YAML indentation mistakes),
+  load_config crashed with `AttributeError: 'bool' object has no
+  attribute 'get'` — not a diagnosis the user could act on. Added
+  `_mapping_section()` helper that raises ConfigError with a
+  "check YAML indentation" pointer, matching the strictness the
+  top-level YAML check already had.
+
+- **Transient-transport retry in the summarizer.** `summarize.py`'s
+  stdlib-urllib HTTP paths (OpenAI-compatible chat via
+  `OpenAIChatProvider`, Google Gemini via `GeminiProvider`)
+  previously failed hard on any transient error — a single DNS
+  hiccup, connection reset, or HTTP 5xx would surface as
+  `SummarizerError` and the paper got classified as skip. Over a
+  1000-paper batch this adds up.
+
+  Added a conservative retry loop: up to 2 retries on
+  `urllib.error.URLError`, `TimeoutError`, and HTTP 5xx, with
+  exponential backoff (1s, 3s). HTTP 400/404 (deterministic input
+  errors) never retry. HTTP 429 goes through the existing
+  quota-classification path for Gemini — retry logic there is
+  already correct via `QuotaExhaustedError.retry_after`.
+
+  The OpenAI and Gemini Python SDKs handle this internally; this
+  change only matters for the stdlib-urllib paths (which kb-importer
+  uses for all three providers: Gemini, OpenAI-compatible, OpenRouter).
+
+### Added (test coverage)
+
+- `test_config_section_types.py` — 8 cases: mapping pass-through,
+  bool / str / list / int sections rejected with ConfigError, plus
+  end-to-end `load_config` verification that `embeddings: false`
+  fails cleanly.
+- `test_summarize_retry.py` — 9 cases monkeypatching `urllib.request
+  .urlopen` with scripted outcomes: happy path, URLError retried
+  to success, TimeoutError retried, HTTP 503 retried, HTTP 400/404
+  NOT retried, retry budget exhausted → SummarizerError, Gemini 429
+  bails via QuotaExhaustedError without consuming retry budget.
+
+### Audit notes (1.3.1 context)
+
+The reviewer asked about robustness when the LLM API is unavailable.
+Summary of what's already in place plus what this release adds:
+
+- **Missing API key** → `build_from_config` returns None (embeddings)
+  / `SummarizerError` raised early (fulltext). Graceful degrade for
+  embeddings; hard-fail for fulltext (correct — user explicitly asked
+  to summarize).
+- **Per-batch embedding failure** → `log.warning`, loop continues,
+  partial papers flagged so next `index` run retries. Already correct.
+- **Per-paper fulltext failure** → classified into events.jsonl
+  (`quota_exhausted`, `llm_bad_request`, `pdf_missing`, `llm_other`),
+  batch continues, `kb-mcp report` aggregates. Already correct.
+- **Gemini RPD quota** → `--fulltext-fallback-model` auto-switch.
+  Already correct.
+- **Gemini RPM quota** → `time.sleep(retry_after)` then retry same
+  model. Already correct.
+- **Transient network / 5xx** → 1.3.1: exponential-backoff retry,
+  up to 2 retries, across both stdlib-urllib paths.
+
+Not implemented in 1.3.1 (deferred):
+- **Circuit breaker** for N-consecutive same-code failures in
+  batch fulltext / re-read. The existing per-paper retry + typed
+  classification already handles most cases; adding a circuit
+  breaker is a 1.4 feature if needed.
+- **Preflight connectivity check** (`kb-importer preflight
+  --fulltext-provider X` pings with a 5-token request). Nice-to-have,
+  low priority since the first paper's error message is already
+  actionable.
+- **Non-Gemini quota classification.** OpenAI 429 / OpenRouter 429
+  currently hit the generic 5xx retry path, which is suboptimal but
+  not broken — the retry logic will eventually give up and the
+  paper will be skipped. Proper classification needs provider-
+  specific error-body parsing; deferred.
+
+### Verification
+
+- Four lints + byte-compile clean.
+- 497/497 unit tests (+17 from 1.3.0: 8 config-section-type,
+  9 summarizer-retry).
+- 46/46 e2e.
+- post-install smoke: 14 pass / 2 expected skip.
+- Release zip kb-tools-1.3.1.zip.
+
 ## [1.3.0] — 2026-04-24
 
 Minor release. Introduces **three integration modes for re-read /

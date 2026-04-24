@@ -189,6 +189,35 @@ def _validate_batch_size(size: int, provider: str) -> int:
     return size
 
 
+def _mapping_section(raw: dict, name: str) -> dict:
+    """Return raw[name] if it's a dict (or absent / None → empty dict).
+
+    Existing code called `raw.get(name, {}) or {}` which coerces None
+    and absent-key to empty dict. But if the user wrote `embeddings:
+    false` or `logging: debug` or `store: [journal_mode: wal]`, the
+    returned value is a bool / str / list and the subsequent
+    `.get(...)` crashes with AttributeError. The crash message
+    ("'bool' object has no attribute 'get'") doesn't point the user
+    at their YAML mistake.
+
+    Guard here so any non-mapping section surfaces as a ConfigError
+    with the same "Check YAML indentation" hint the top-level YAML
+    validator already gives.
+    """
+    value = raw.get(name, {})
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ConfigError(
+            f"config section {name!r}: expected a mapping of "
+            f"key/value pairs, got {type(value).__name__}. "
+            f"Check YAML indentation — common mistake is writing "
+            f"`{name}: value` instead of `{name}:` followed by "
+            f"indented `key: value` pairs."
+        )
+    return value
+
+
 @dataclass
 class Config:
     kb_root: Path
@@ -310,13 +339,13 @@ def load_config(
                 f"Autodetect error: {e}"
             ) from e
 
-    log_cfg = raw.get("logging", {}) or {}
+    log_cfg = _mapping_section(raw, "logging")
     log_file = log_cfg.get("file")
 
-    emb_cfg = raw.get("embeddings", {}) or {}
+    emb_cfg = _mapping_section(raw, "embeddings")
     provider = str(emb_cfg.get("provider", "openai")).lower()
 
-    store_cfg = raw.get("store", {}) or {}
+    store_cfg = _mapping_section(raw, "store")
     journal_mode = str(store_cfg.get("journal_mode", "delete")).lower()
 
     return Config(
