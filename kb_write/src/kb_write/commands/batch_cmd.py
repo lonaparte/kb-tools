@@ -34,13 +34,45 @@ def register_re_summarize(sub) -> None:
     p.add_argument(
         "--provider", default=None,
         help=(
-            "Override LLM provider for this run (gemini|openai|"
-            "deepseek). Default: as configured in kb-importer."
+            "Override LLM provider for the rewrite pass "
+            "(gemini|openai|deepseek|openrouter). Default: as "
+            "configured in kb-importer."
         ),
     )
     p.add_argument(
         "--model", default=None,
-        help="Override LLM model for this run. Default: as configured.",
+        help="Override LLM model for the rewrite pass. Default: as configured.",
+    )
+    p.add_argument(
+        "--mode", default="append",
+        choices=["append", "replace", "merge"],
+        help=(
+            "How to integrate the new summary (1.3.0+). "
+            "'append' (default): prepend a new dated revisit block "
+            "at the top of the md's Revisits region; baseline "
+            "fulltext never changes. Safe to run repeatedly with "
+            "different models. "
+            "'replace': overwrite the fulltext block with the fresh "
+            "summary; Revisits block untouched. Destructive; "
+            "equivalent to a single-paper --force-fulltext. "
+            "'merge': pre-1.3 behavior — per-section LLM judge "
+            "decides old vs new. Use --judge-model to pass a "
+            "stronger LLM for the judge pass (recommended when "
+            "--model is a cheap / free-tier option)."
+        ),
+    )
+    p.add_argument(
+        "--judge-provider", default=None,
+        help=(
+            "[merge mode only] Provider for the judge LLM. Default: "
+            "same as --provider. Set to a stronger model when the "
+            "rewrite pass uses a cheap / free-tier one, so weak "
+            "judging doesn't slowly erode good content."
+        ),
+    )
+    p.add_argument(
+        "--judge-model", default=None,
+        help="[merge mode only] Model for the judge LLM. Default: same as --model.",
     )
     p.set_defaults(func=_cmd_re_summarize)
 
@@ -52,6 +84,9 @@ def _cmd_re_summarize(args, ctx):
             ctx, args.target,
             provider=args.provider,
             model=args.model,
+            mode=args.mode,
+            judge_provider=args.judge_provider,
+            judge_model=args.judge_model,
         )
     except ReSummarizeError as e:
         print(f"re-summarize failed: {e}", file=sys.stderr)
@@ -69,9 +104,12 @@ def _cmd_re_summarize(args, ctx):
         print(json.dumps({
             "paper_key": report.paper_key,
             "md_path": rel,
+            "mode": report.mode,
             "mtime_after": report.mtime_after,
             "git_sha": report.git_sha,
             "reindexed": report.reindexed,
+            "model_used": report.model_used,
+            "revisit_date": report.revisit_date,
             "verdicts": [
                 {"section": v.section, "verdict": v.verdict,
                  "reason": v.reason}
@@ -152,6 +190,23 @@ def register_re_read(sub) -> None:
     p.add_argument(
         "--model", default=None,
         help="LLM model override for re-summarize pass.",
+    )
+    p.add_argument(
+        "--mode", default="append",
+        choices=["append", "replace", "merge"],
+        help=(
+            "Integration mode forwarded to every re-summarize call. "
+            "See `kb-write re-summarize --help` for details. Default: "
+            "append (non-destructive; recommended for batch use)."
+        ),
+    )
+    p.add_argument(
+        "--judge-provider", default=None,
+        help="[merge mode only] Provider override for the judge LLM.",
+    )
+    p.add_argument(
+        "--judge-model", default=None,
+        help="[merge mode only] Model override for the judge LLM.",
     )
     p.set_defaults(func=_cmd_re_read)
 
@@ -247,6 +302,9 @@ def _cmd_re_read(args, ctx):
             storage_dir=storage_dir,
             provider=args.provider,
             model=args.model,
+            mode=args.mode,
+            judge_provider=args.judge_provider,
+            judge_model=args.judge_model,
         )
     except ValueError as e:
         print(f"error: {e}", file=sys.stderr)

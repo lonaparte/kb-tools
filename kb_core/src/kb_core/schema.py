@@ -39,3 +39,32 @@ FULLTEXT_END   = "<!-- kb-fulltext-end -->"
 # kb_importer.templates.ai_summary_prompt.md). Used by
 # kb_write.ops.re_summarize to validate the LLM splice.
 SECTION_COUNT = 7
+
+
+# 1.3.0: Revisits region. Accumulates time-stamped LLM re-reads of
+# the same paper. `kb-write re-summarize --mode append` (the default
+# since 1.3.0) never overwrites the fulltext block; it prepends a
+# new revisit block at the top of the revisits region.
+#
+# Layout (newest revisit first, prepended each run):
+#
+#   ## Revisits
+#
+#   <!-- kb-revisits-start -->
+#   <!-- kb-revisit-block date="2026-04-24" model="openrouter/foo" -->
+#   ### 2026-04-24 — openrouter/foo
+#   …new 7-section summary…
+#   <!-- /kb-revisit-block -->
+#
+#   <!-- kb-revisit-block date="2026-03-01" model="openai/gpt-4o" -->
+#   …older revisit…
+#   <!-- /kb-revisit-block -->
+#   <!-- kb-revisits-end -->
+#
+# The START/END markers delimit the whole region for surgical
+# splicing; the per-block open/close markers let the indexer, the
+# doctor, and re_summarize itself walk individual revisits.
+REVISITS_START       = "<!-- kb-revisits-start -->"
+REVISITS_END         = "<!-- kb-revisits-end -->"
+REVISIT_BLOCK_START  = "<!-- kb-revisit-block"   # opener — has attrs, closed by `-->`
+REVISIT_BLOCK_END    = "<!-- /kb-revisit-block -->"

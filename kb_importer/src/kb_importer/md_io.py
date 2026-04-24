@@ -74,6 +74,14 @@ class PreservedContent:
     user_override_fields: dict[str, Any] = field(default_factory=dict)
     ai_zone_body: str | None = None
     fulltext_body: str | None = None
+    # 1.3.0: Revisits region accumulates re-read results. kb-importer
+    # must preserve this across re-imports / `sync` / `--force-fulltext`
+    # — without this field, a sync of a paper that had revisits would
+    # silently drop the entire Revisits section. `section_markdown`
+    # is the full region text INCLUDING the surrounding `## Revisits`
+    # heading and the kb-revisits-{start,end} markers (so
+    # inject_preserved can round-trip it unchanged).
+    revisits_section: str | None = None
 
 
 def read_md(path: Path) -> frontmatter.Post:
@@ -181,13 +189,57 @@ def extract_preserved(path: Path) -> PreservedContent:
                 path.name,
             )
 
+    # 1.3.0: preserve the Revisits section (if any) as opaque
+    # verbatim text. md_builder doesn't know how to render it; we
+    # just splice it back in at the end on re-render.
+    revisits_section = _extract_revisits_section(post.content)
+
     return PreservedContent(
         kb_frontmatter=kb_fields,
         fulltext_frontmatter=fulltext_fields,
         user_override_fields=user_override_fields,
         ai_zone_body=ai_zone,
         fulltext_body=fulltext,
+        revisits_section=revisits_section,
     )
+
+
+# 1.3.0: markers that delimit the Revisits region.
+_REVISITS_START_MARKER = "<!-- kb-revisits-start -->"
+_REVISITS_END_MARKER   = "<!-- kb-revisits-end -->"
+
+
+def _extract_revisits_section(body: str) -> str | None:
+    """Return the verbatim `## Revisits` section including heading
+    and markers, or None if absent. Used by extract_preserved to
+    round-trip the region across kb-importer re-renders.
+
+    We look for `## Revisits` as the heading, but the markers are
+    what authoritatively bound the content (heading could be
+    missing from a hand-edited file; markers must not).
+    """
+    start = body.find(_REVISITS_START_MARKER)
+    if start < 0:
+        return None
+    end = body.find(_REVISITS_END_MARKER, start + len(_REVISITS_START_MARKER))
+    if end < 0:
+        # Corrupt region — let doctor flag it, don't silently drop.
+        return None
+    end_full = end + len(_REVISITS_END_MARKER)
+
+    # Walk backwards from start to pick up the `## Revisits` heading
+    # and the blank line(s) above the start marker, so the round-trip
+    # preserves the original layout. Cap the walk at 200 chars so a
+    # malformed / heading-missing file still round-trips (we accept
+    # whatever's between nearest `\n##` or start-of-body and the end
+    # marker).
+    search_from = max(0, start - 200)
+    heading_idx = body.rfind("\n## Revisits", search_from, start)
+    if heading_idx >= 0:
+        section_begin = heading_idx + 1  # skip the leading '\n'
+    else:
+        section_begin = start  # no heading found; markers only
+    return body[section_begin:end_full]
 
 
 # Legacy title for the fulltext region (pre-v21). Exact string must
@@ -378,6 +430,16 @@ def inject_preserved(body: str, preserved: PreservedContent) -> str:
         FULLTEXT_END,
         preserved.fulltext_body or f"\n{FULLTEXT_PLACEHOLDER}\n",
     )
+    # 1.3.0: re-append the Revisits section if one was preserved.
+    # md_builder doesn't emit this section at all (revisits are
+    # added by kb-write re-summarize --mode append, not by the
+    # importer). So a template rebuild would drop it without this
+    # splice. We append verbatim, after all template-generated body,
+    # mirroring where re_summarize originally put it.
+    if preserved.revisits_section:
+        # Ensure one blank line separator so the new section doesn't
+        # glue onto the end of the ai-zone without a visual break.
+        body = body.rstrip() + "\n\n" + preserved.revisits_section.rstrip() + "\n"
     return body
 
 

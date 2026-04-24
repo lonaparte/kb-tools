@@ -98,8 +98,87 @@ def doctor(
     _check_refs_in_all(kb_root, report)
     _check_frontmatter_types(kb_root, report)
     _check_list_duplicates(kb_root, report, fix=fix)
+    _check_revisits_markers(kb_root, report)
 
     return report
+
+
+# ----------------------------------------------------------------------
+# Revisits region (1.3.0): verify start/end markers pair cleanly and
+# every revisit-block has a matching close. A malformed Revisits
+# region would cause re_summarize --mode append to refuse its splice
+# (by design) and the indexer to ingest broken boundaries.
+# ----------------------------------------------------------------------
+
+_REVISITS_START = "<!-- kb-revisits-start -->"
+_REVISITS_END = "<!-- kb-revisits-end -->"
+_REVISIT_BLOCK_OPEN_TAG = "<!-- kb-revisit-block"
+_REVISIT_BLOCK_CLOSE = "<!-- /kb-revisit-block -->"
+
+
+def _check_revisits_markers(kb_root: Path, report: DoctorReport) -> None:
+    """For every paper md: if the file mentions the revisits start /
+    end / block markers, they must balance and pair correctly.
+
+    Only scans papers/; the revisits region doesn't appear anywhere
+    else in the KB.
+    """
+    papers_dir = kb_root / "papers"
+    if not papers_dir.exists():
+        return
+    for md in sorted(papers_dir.glob("*.md")):
+        if md.name.startswith("."):
+            continue
+        try:
+            text = md.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        rel = md.relative_to(kb_root).as_posix()
+
+        n_start = text.count(_REVISITS_START)
+        n_end   = text.count(_REVISITS_END)
+        n_open  = text.count(_REVISIT_BLOCK_OPEN_TAG)
+        n_close = text.count(_REVISIT_BLOCK_CLOSE)
+
+        # Skip files that have no revisits at all.
+        if (n_start, n_end, n_open, n_close) == (0, 0, 0, 0):
+            continue
+
+        if n_start != 1 or n_end != 1:
+            report.findings.append(Finding(
+                severity="error", category="revisits",
+                path=rel,
+                message=(
+                    f"revisits region markers unbalanced: "
+                    f"start×{n_start}, end×{n_end} (must be exactly "
+                    f"one of each). Inspect the md and restore markers."
+                ),
+                auto_fixable=False,
+            ))
+            continue
+
+        # Region found. Start must come before end.
+        i = text.find(_REVISITS_START)
+        j = text.find(_REVISITS_END, i + len(_REVISITS_START))
+        if j < 0:
+            report.findings.append(Finding(
+                severity="error", category="revisits",
+                path=rel,
+                message="revisits end marker appears before start marker",
+                auto_fixable=False,
+            ))
+            continue
+
+        if n_open != n_close:
+            report.findings.append(Finding(
+                severity="error", category="revisits",
+                path=rel,
+                message=(
+                    f"revisit-block open/close markers unbalanced "
+                    f"(open×{n_open}, close×{n_close})"
+                ),
+                auto_fixable=False,
+            ))
 
 
 # ----------------------------------------------------------------------

@@ -64,7 +64,11 @@ log = logging.getLogger(__name__)
 # "so kb_write doesn't hard-depend on kb_importer"; kb_core is
 # stdlib-only and is already a required dep of every package
 # in the bundle, so the import is clean.
-from kb_core import FULLTEXT_START, FULLTEXT_END
+from kb_core import (
+    FULLTEXT_START, FULLTEXT_END,
+    REVISITS_START, REVISITS_END,
+    REVISIT_BLOCK_START, REVISIT_BLOCK_END,
+)
 
 # The 7 sections we expect inside the fulltext region. Identified by
 # the canonical English+Chinese heading pattern kb-importer emits.
@@ -87,11 +91,33 @@ class ReSummarizeReport:
     paper_key: str
     md_path: Path
     mtime_after: float
+    # Mode that produced this report — "append" | "replace" | "merge".
+    # Drives the human-readable summary line; also recorded in events.
+    mode: str = "merge"
+    # Populated only in merge mode (per-section LLM verdicts).
     verdicts: list[SectionVerdict] = field(default_factory=list)
+    # Populated only in append mode (timestamp of the new revisit block).
+    revisit_date: str | None = None
+    # Model identifier recorded in the revisit block (append mode) or
+    # used by the rewrite pass (all modes). For merge mode this is the
+    # rewrite provider; the judge provider is separate.
+    model_used: str | None = None
     git_sha: str | None = None
     reindexed: bool = False
 
     def summary_line(self) -> str:
+        if self.mode == "append":
+            return (
+                f"Appended revisit dated {self.revisit_date} "
+                f"(model={self.model_used or '?'}). Baseline "
+                f"fulltext unchanged."
+            )
+        if self.mode == "replace":
+            return (
+                f"Replaced fulltext with fresh {SECTION_COUNT}-section "
+                f"summary (model={self.model_used or '?'}). Revisits "
+                f"block unchanged."
+            )
         n_new = sum(1 for v in self.verdicts if v.verdict == "new")
         n_old = sum(1 for v in self.verdicts if v.verdict == "old")
         n_tied = sum(1 for v in self.verdicts if v.verdict == "tied")
@@ -124,12 +150,18 @@ class ReSummarizeError(Exception):
         self.code = code
 
 
+VALID_MODES: tuple[str, ...] = ("append", "replace", "merge")
+
+
 def re_summarize(
     ctx: WriteContext,
     paper_target: str,
     *,
     provider: str | None = None,
     model: str | None = None,
+    mode: str = "append",
+    judge_provider: str | None = None,
+    judge_model: str | None = None,
 ) -> ReSummarizeReport:
     """Entry point. See module docstring for semantics.
 
@@ -140,7 +172,28 @@ def re_summarize(
       - "papers/BOOKKEY-ch03"      (book chapter — fully supported)
 
     `provider` / `model` override kb-importer's configured fulltext
-    provider for this run; pass None to use the configured default.
+    provider for the rewrite pass; pass None to use the configured
+    default.
+
+    `mode` selects how the new summary is integrated (1.3.0+):
+
+      "append" (default): prepend a new <!-- kb-revisit-block --> at
+          the top of the paper md's Revisits region. Baseline
+          fulltext is NEVER modified. No judge LLM call. Safest
+          option; lets you re-read with a weaker or cheaper model
+          without risking the authoritative first-pass summary.
+      "replace": overwrite the fulltext region with the new
+          7-section summary. Revisits region untouched. Destructive
+          but deterministic — equivalent to a single-paper
+          `kb-importer import papers --force-fulltext KEY`. No judge
+          LLM call.
+      "merge": pre-1.3.0 behavior. Run per-section LLM judge over
+          old vs new; splice only sections verdicted "new".
+          `judge_provider` / `judge_model` override the LLM used
+          for the judge pass (independent of rewrite). Recommended
+          when rewrite runs a cheap model: pass a stronger one for
+          judge to avoid letting a weak LLM slowly erode good
+          content.
 
     Side effect (v26.x): every terminal outcome — success, no-change,
     or any ReSummarizeError — is recorded as a single event_type=
@@ -150,9 +203,17 @@ def re_summarize(
     never swallows the caller's exception — if the write fails, the
     original outcome is preserved.
     """
+    if mode not in VALID_MODES:
+        raise ReSummarizeError(
+            f"invalid mode {mode!r}. Choices: {VALID_MODES}",
+            code="bad_request",
+        )
     try:
         report = _re_summarize_core(
-            ctx, paper_target, provider=provider, model=model,
+            ctx, paper_target,
+            provider=provider, model=model,
+            mode=mode,
+            judge_provider=judge_provider, judge_model=judge_model,
         )
     except ReSummarizeError as e:
         _record_re_summarize_failure(ctx.kb_root, paper_target, e,
@@ -175,11 +236,19 @@ def _re_summarize_core(
     ctx: WriteContext,
     paper_target: str,
     *,
-    provider: str | None = None,
-    model: str | None = None,
+    provider: str | None,
+    model: str | None,
+    mode: str,
+    judge_provider: str | None,
+    judge_model: str | None,
 ) -> ReSummarizeReport:
     """Body of re_summarize; wrapped by re_summarize() so the wrapper
-    can emit events around it without complicating the happy path."""
+    can emit events around it without complicating the happy path.
+
+    Shared pre-flight: resolve md, verify fulltext_processed, extract
+    old fulltext, run new LLM pass. After that the three modes
+    diverge to their own splice / append / overwrite helpers.
+    """
     address, md_path = _resolve_paper_md(ctx.kb_root, paper_target)
     original_text = md_path.read_text(encoding="utf-8")
 
@@ -202,8 +271,7 @@ def _re_summarize_core(
             f"Structure is non-standard — cannot re-summarise automatically."
         )
 
-    # Fetch PDF + run new LLM summary (delegated to kb_importer's
-    # fulltext pipeline via a thin adapter).
+    # Rewrite pass: same for all three modes.
     new_sections = _run_new_summary_pass(
         ctx.kb_root, address.key, original_text,
         provider=provider, model=model,
@@ -215,15 +283,168 @@ def _re_summarize_core(
             f"Not safe to splice — aborting without changes."
         )
 
-    # Per-section diff + LLM judge.
-    verdicts = _judge_sections(
-        ctx.kb_root, address.key, old_sections, new_sections,
-        provider=provider, model=model,
+    model_label = _format_model_label(provider, model)
+
+    if mode == "append":
+        return _apply_append_mode(
+            ctx, address, md_path, original_text, new_sections,
+            model_label=model_label,
+        )
+    if mode == "replace":
+        return _apply_replace_mode(
+            ctx, address, md_path, original_text, new_sections,
+            model_label=model_label,
+        )
+    # mode == "merge"
+    return _apply_merge_mode(
+        ctx, address, md_path, original_text,
+        old_sections=old_sections, new_sections=new_sections,
+        judge_provider=(judge_provider if judge_provider else provider),
+        judge_model=(judge_model if judge_model else model),
+        rewrite_model_label=model_label,
     )
 
-    # Splice: build the new fulltext region, replacing only the
-    # sections the LLM marked verdict="new". Everything else stays
-    # exactly as it was, to preserve wording the first pass got right.
+
+# ---------------------------------------------------------------------
+# Mode: append — prepend a revisit block, leave baseline untouched.
+# ---------------------------------------------------------------------
+
+def _apply_append_mode(
+    ctx: WriteContext,
+    address: NodeAddress,
+    md_path: Path,
+    original_text: str,
+    new_sections: list[str],
+    *,
+    model_label: str,
+) -> ReSummarizeReport:
+    from datetime import date as _date
+
+    revisit_date = _date.today().isoformat()
+    new_region = _rejoin_sections(new_sections)
+    block = _build_revisit_block(revisit_date, model_label, new_region)
+    new_text = _prepend_revisit_block(original_text, block)
+
+    if ctx.dry_run:
+        return ReSummarizeReport(
+            paper_key=address.key, md_path=md_path,
+            mtime_after=0.0, mode="append",
+            revisit_date=revisit_date, model_used=model_label,
+        )
+
+    mtime_before = md_path.stat().st_mtime
+    with write_lock(ctx.kb_root) if ctx.lock else _nullcontext():
+        atomic_write(md_path, new_text, expected_mtime=mtime_before)
+        mtime_after = md_path.stat().st_mtime
+
+        git_sha = None
+        if ctx.git_commit:
+            git_sha = auto_commit(
+                ctx.kb_root, [md_path],
+                op="re_summarize",
+                target=address.md_rel_path,
+                message_body=(
+                    f"re-summarize {address.key} (append): new revisit "
+                    f"dated {revisit_date} by {model_label}; baseline "
+                    f"fulltext unchanged"
+                ),
+                enabled=True,
+            )
+        reindexed = trigger_reindex(ctx.kb_root, enabled=ctx.reindex)
+
+    return ReSummarizeReport(
+        paper_key=address.key, md_path=md_path,
+        mtime_after=mtime_after, mode="append",
+        revisit_date=revisit_date, model_used=model_label,
+        git_sha=git_sha, reindexed=reindexed,
+    )
+
+
+# ---------------------------------------------------------------------
+# Mode: replace — overwrite the fulltext block entirely. Revisits
+# region (if any) is left as-is.
+# ---------------------------------------------------------------------
+
+def _apply_replace_mode(
+    ctx: WriteContext,
+    address: NodeAddress,
+    md_path: Path,
+    original_text: str,
+    new_sections: list[str],
+    *,
+    model_label: str,
+) -> ReSummarizeReport:
+    new_region = _rejoin_sections(new_sections)
+    new_text = _replace_fulltext_region(original_text, new_region)
+
+    if new_text == original_text:
+        # LLM produced byte-identical output after whitespace norm —
+        # rare but possible. No commit needed, but still mtime-guard
+        # to catch concurrent edits.
+        assert_mtime_unchanged(md_path, md_path.stat().st_mtime)
+        return ReSummarizeReport(
+            paper_key=address.key, md_path=md_path,
+            mtime_after=md_path.stat().st_mtime,
+            mode="replace", model_used=model_label,
+        )
+
+    if ctx.dry_run:
+        return ReSummarizeReport(
+            paper_key=address.key, md_path=md_path,
+            mtime_after=0.0, mode="replace", model_used=model_label,
+        )
+
+    mtime_before = md_path.stat().st_mtime
+    with write_lock(ctx.kb_root) if ctx.lock else _nullcontext():
+        atomic_write(md_path, new_text, expected_mtime=mtime_before)
+        mtime_after = md_path.stat().st_mtime
+
+        git_sha = None
+        if ctx.git_commit:
+            git_sha = auto_commit(
+                ctx.kb_root, [md_path],
+                op="re_summarize",
+                target=address.md_rel_path,
+                message_body=(
+                    f"re-summarize {address.key} (replace): overwrote "
+                    f"fulltext with fresh {SECTION_COUNT}-section "
+                    f"summary by {model_label}"
+                ),
+                enabled=True,
+            )
+        reindexed = trigger_reindex(ctx.kb_root, enabled=ctx.reindex)
+
+    return ReSummarizeReport(
+        paper_key=address.key, md_path=md_path,
+        mtime_after=mtime_after, mode="replace",
+        model_used=model_label,
+        git_sha=git_sha, reindexed=reindexed,
+    )
+
+
+# ---------------------------------------------------------------------
+# Mode: merge — pre-1.3.0 behavior. Per-section judge + selective
+# splice. Kept verbatim; only pulled into its own function and given
+# separate judge-model plumbing.
+# ---------------------------------------------------------------------
+
+def _apply_merge_mode(
+    ctx: WriteContext,
+    address: NodeAddress,
+    md_path: Path,
+    original_text: str,
+    *,
+    old_sections: list[str],
+    new_sections: list[str],
+    judge_provider: str | None,
+    judge_model: str | None,
+    rewrite_model_label: str,
+) -> ReSummarizeReport:
+    verdicts = _judge_sections(
+        ctx.kb_root, address.key, old_sections, new_sections,
+        provider=judge_provider, model=judge_model,
+    )
+
     merged_sections = [
         v.new_content if v.verdict == "new" else old_sections[i]
         for i, v in enumerate(verdicts)
@@ -232,26 +453,20 @@ def _re_summarize_core(
     new_text = _replace_fulltext_region(original_text, new_region)
 
     if new_text == original_text:
-        # All verdicts were "old" or "tied" — the LLM agreed with
-        # every existing section. No change, no commit, but still
-        # verify mtime to catch concurrent edits.
         assert_mtime_unchanged(md_path, md_path.stat().st_mtime)
         return ReSummarizeReport(
             paper_key=address.key, md_path=md_path,
             mtime_after=md_path.stat().st_mtime,
-            verdicts=verdicts, git_sha=None, reindexed=False,
+            mode="merge", verdicts=verdicts,
+            model_used=rewrite_model_label,
+            git_sha=None, reindexed=False,
         )
-
-    # (We don't prepend a changelog line to the md. The git commit
-    # message is the canonical record; an in-md breadcrumb would
-    # fight the splice — it'd drift the ai-zone mtime and collide
-    # with ai_zone.append. If we want per-run breadcrumbs later,
-    # the audit log under .kb-mcp/ is the right home.)
 
     if ctx.dry_run:
         return ReSummarizeReport(
             paper_key=address.key, md_path=md_path,
-            mtime_after=0.0, verdicts=verdicts,
+            mtime_after=0.0, mode="merge", verdicts=verdicts,
+            model_used=rewrite_model_label,
         )
 
     mtime_before = md_path.stat().st_mtime
@@ -267,8 +482,8 @@ def _re_summarize_core(
                 op="re_summarize",
                 target=address.md_rel_path,
                 message_body=(
-                    f"re-summarize {address.key}: updated {n_new} of "
-                    f"{SECTION_COUNT} sections"
+                    f"re-summarize {address.key} (merge): updated "
+                    f"{n_new} of {SECTION_COUNT} sections"
                 ),
                 enabled=True,
             )
@@ -276,7 +491,8 @@ def _re_summarize_core(
 
     return ReSummarizeReport(
         paper_key=address.key, md_path=md_path,
-        mtime_after=mtime_after, verdicts=verdicts,
+        mtime_after=mtime_after, mode="merge", verdicts=verdicts,
+        model_used=rewrite_model_label,
         git_sha=git_sha, reindexed=reindexed,
     )
 
@@ -527,6 +743,104 @@ def _replace_fulltext_region(md_text: str, new_region: str) -> str:
     return f"{before}\n{body}\n{after}"
 
 
+# ---------------------------------------------------------------------
+# 1.3.0: Revisits block helpers.
+# ---------------------------------------------------------------------
+
+def _format_model_label(provider: str | None, model: str | None) -> str:
+    """Short, human-readable label for the model that ran this pass.
+
+    Used in the revisit block header and the git commit message.
+    When both are None, returns "(default)" — means the kb-importer
+    config default was used.
+    """
+    if provider and model:
+        return f"{provider}/{model}"
+    if model:
+        return model
+    if provider:
+        return provider
+    return "(default)"
+
+
+def _build_revisit_block(revisit_date: str, model_label: str,
+                         region: str) -> str:
+    """Assemble one <!-- kb-revisit-block --> wrapped around a
+    7-section summary region. region should already be the output of
+    _rejoin_sections."""
+    body = region.strip("\n")
+    return (
+        f'{REVISIT_BLOCK_START} date="{revisit_date}" '
+        f'model="{model_label}" -->\n'
+        f"### {revisit_date} — {model_label}\n\n"
+        f"{body}\n\n"
+        f"{REVISIT_BLOCK_END}\n"
+    )
+
+
+_REVISITS_HEADING_RE = re.compile(r"^##\s+Revisits\s*$", re.MULTILINE)
+
+
+def _prepend_revisit_block(md_text: str, block: str) -> str:
+    """Insert `block` at the top of the Revisits region.
+
+    Three cases handled:
+
+    1. md already has `<!-- kb-revisits-start -->` / `-end -->`
+       markers — splice block immediately after START.
+    2. md has a `## Revisits` heading but no markers (corrupt /
+       hand-edited state) — treat as case 3 and rebuild markers.
+    3. md has neither — append a fresh `## Revisits` section with
+       markers and one block, at end of md (after everything else
+       including ai-zone).
+
+    Returns the new full md text. `block` must end with `\\n` (see
+    _build_revisit_block).
+    """
+    i = md_text.find(REVISITS_START)
+    if i >= 0:
+        j = md_text.find(REVISITS_END, i + len(REVISITS_START))
+        if j < 0:
+            raise ReSummarizeError(
+                "revisits region has kb-revisits-start but no "
+                "kb-revisits-end marker — refusing to splice. Run "
+                "`kb-write doctor` to diagnose."
+            )
+        # Insert after START marker + newline.
+        before = md_text[: i + len(REVISITS_START)]
+        after = md_text[j:]  # from END marker onward
+        existing = md_text[i + len(REVISITS_START): j]
+        # Keep existing content, prepend new block. Normalise leading
+        # blank line so the START marker is on its own line.
+        combined = f"\n{block.rstrip()}\n{existing.lstrip()}"
+        return f"{before}{combined}{after}"
+
+    # No existing revisits region. Build one from scratch at end of md.
+    # Trim trailing whitespace on the existing md so we don't stack
+    # blank lines.
+    trimmed = md_text.rstrip() + "\n"
+    new_section = (
+        f"\n## Revisits\n\n"
+        f"{REVISITS_START}\n"
+        f"{block.rstrip()}\n"
+        f"{REVISITS_END}\n"
+    )
+    return trimmed + new_section
+
+
+def _extract_revisits_region(md_text: str) -> str | None:
+    """Return the text between REVISITS_START and REVISITS_END (excl.
+    markers). None if either marker is absent. Used by kb_importer's
+    preserved-regions pass and by the doctor."""
+    i = md_text.find(REVISITS_START)
+    if i < 0:
+        return None
+    j = md_text.find(REVISITS_END, i + len(REVISITS_START))
+    if j < 0:
+        return None
+    return md_text[i + len(REVISITS_START): j]
+
+
 _SECTION_HEAD_RE = re.compile(
     r"^##\s+(\d+)\.\s*(.*?)\s*$", re.MULTILINE,
 )
@@ -702,15 +1016,29 @@ def _text_equiv(a: str, b: str) -> bool:
 
 def format_report(report: ReSummarizeReport) -> str:
     """Human-readable report for CLI stdout."""
-    lines = [f"re-summarize {report.paper_key}:", ""]
-    for v in report.verdicts:
-        if v.verdict == "new":
-            lines.append(f"  §{v.section}  UPDATED  — {v.reason or 'LLM judged new as correct'}")
-        elif v.verdict == "old":
-            lines.append(f"  §{v.section}  kept     — {v.reason or 'LLM judged old as correct'}")
-        else:
-            lines.append(f"  §{v.section}  tied     — {v.reason or 'identical after normalisation'}")
-    lines.append("")
+    lines = [f"re-summarize {report.paper_key} [{report.mode}]:", ""]
+    if report.mode == "merge":
+        for v in report.verdicts:
+            if v.verdict == "new":
+                lines.append(f"  §{v.section}  UPDATED  — {v.reason or 'LLM judged new as correct'}")
+            elif v.verdict == "old":
+                lines.append(f"  §{v.section}  kept     — {v.reason or 'LLM judged old as correct'}")
+            else:
+                lines.append(f"  §{v.section}  tied     — {v.reason or 'identical after normalisation'}")
+        lines.append("")
+    elif report.mode == "append":
+        lines.append(
+            f"  revisit {report.revisit_date} by {report.model_used or '?'} "
+            f"prepended to Revisits region"
+        )
+        lines.append("")
+    elif report.mode == "replace":
+        lines.append(
+            f"  fulltext region overwritten with fresh "
+            f"{SECTION_COUNT}-section summary "
+            f"(model={report.model_used or '?'})"
+        )
+        lines.append("")
     lines.append(report.summary_line())
     if report.git_sha:
         lines.append(f"git: {report.git_sha}")

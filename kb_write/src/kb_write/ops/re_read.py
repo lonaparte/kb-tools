@@ -29,6 +29,8 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from kb_core import SECTION_COUNT
+
 from ..config import WriteContext
 from ..selectors import (
     REGISTRY as SELECTOR_REGISTRY, DEFAULT_SELECTOR_NAME,
@@ -64,6 +66,9 @@ def re_read(
     storage_dir: Path | None = None,
     provider: str | None = None,
     model: str | None = None,
+    mode: str = "append",
+    judge_provider: str | None = None,
+    judge_model: str | None = None,
 ) -> ReReadReport:
     """Entry point. See module docstring for semantics.
 
@@ -79,6 +84,10 @@ def re_read(
                  dryrun events, but don't run any LLM.
         storage_dir: only used when source_name == "storage".
         provider / model: forwarded to re_summarize per-paper.
+        mode: "append" (default, non-destructive) | "replace" |
+              "merge". Forwarded to every re_summarize call.
+        judge_provider / judge_model: only consulted when
+                                      mode == "merge". See re_summarize.
 
     Raises:
         ValueError: unknown source or selector name.
@@ -172,11 +181,20 @@ def re_read(
             rs_report = re_summarize(
                 ctx, f"papers/{k}",
                 provider=provider, model=model,
+                mode=mode,
+                judge_provider=judge_provider, judge_model=judge_model,
             )
-            # success: count it; add section update count
-            n_new = sum(
-                1 for v in rs_report.verdicts if v.verdict == "new"
-            )
+            # success: count it; add section update count.
+            # In append / replace modes there are no verdicts, so the
+            # "sections updated" accounting only applies to merge mode.
+            # For append: count as 7 new (the whole revisit block).
+            # For replace: count as 7 new (the whole fulltext region).
+            if rs_report.mode == "merge":
+                n_new = sum(
+                    1 for v in rs_report.verdicts if v.verdict == "new"
+                )
+            else:
+                n_new = SECTION_COUNT
             report.success_keys.append(k)
             report.total_sections_updated += n_new
             if _events_ok:

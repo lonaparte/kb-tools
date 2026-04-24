@@ -5,6 +5,112 @@ All notable changes to ee-kb-tools.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is our own (calendar-ish, per-major-iteration).
 
+## [1.3.0] — 2026-04-24
+
+Minor release. Introduces **three integration modes for re-read /
+re-summarize** (`--mode {append,replace,merge}`), replacing the
+pre-1.3 single-mode judge-based merge. The new default mode is
+`append`, which preserves the original fulltext baseline and stacks
+timestamped revisit blocks in a new `## Revisits` region — safe to
+run repeatedly with cheap / free-tier models without eroding the
+authoritative first-pass summary.
+
+Rationale + design trade-offs are discussed inline; short version:
+the judge LLM in the pre-1.3 merge path was the most brittle link,
+especially once `--fulltext-provider openrouter` (1.2.0) made it
+easy to run rewrite on a weak model. The append mode bypasses the
+judge entirely; the `replace` mode skips it too; the `merge` mode
+is retained but gains `--judge-provider` / `--judge-model` flags so
+users can explicitly pay for quality on the judge pass.
+
+### Added
+
+- **`kb-write re-summarize --mode {append,replace,merge}`.** Default
+  is `append`. `re-read` accepts the same flag and passes it
+  through. Detailed semantics in the CLI `--help`:
+    - **append**: prepend a new `<!-- kb-revisit-block -->` at the
+      top of the paper md's `## Revisits` region (newest first).
+      Baseline `<!-- kb-fulltext-* -->` region NEVER changes. No
+      judge LLM call. Safe to run repeatedly. Each block carries the
+      run's date and model identifier.
+    - **replace**: overwrite the fulltext region with a fresh
+      7-section summary. Revisits region (if any) untouched. No
+      judge LLM. Equivalent to a single-paper
+      `kb-importer import papers --force-fulltext KEY`.
+    - **merge**: pre-1.3 behavior — per-section LLM judge decides
+      old vs new, only `verdict=new` sections get spliced in.
+
+- **`--judge-provider` / `--judge-model`** on re-summarize and
+  re-read. Only consulted in merge mode. Lets users run rewrite on
+  a cheap model and judge on a stronger one (recommended when
+  `--model` is a free-tier catalog entry like
+  `openai/gpt-oss-120b:free`).
+
+- **`## Revisits` region markers** in md files:
+    - `<!-- kb-revisits-start -->` / `<!-- kb-revisits-end -->`:
+      whole region bounds; surgical splice point for append mode.
+    - `<!-- kb-revisit-block date="…" model="…" -->` /
+      `<!-- /kb-revisit-block -->`: per-entry bounds for the
+      doctor + any future per-revisit indexing.
+
+- **kb-write doctor** now verifies Revisits markers are paired and
+  balanced. Half-open regions surface as `category=revisits`
+  error findings.
+
+- **Unit-test coverage**: `test_revisits_modes.py`,
+  `test_revisits_preserved.py`, `test_revisits_doctor.py`
+  (23 cases total).
+
+### Changed
+
+- **kb-importer preserved-regions now includes the Revisits
+  section.** Without this change, `kb-importer sync KEY` or
+  `--force-fulltext KEY` on a paper with revisits would silently
+  drop the entire section on re-render. New `PreservedContent
+  .revisits_section` field holds the verbatim `## Revisits`
+  region across re-imports.
+
+- **`re_summarize.ReSummarizeReport`** gains four fields:
+  `mode`, `revisit_date`, `model_used`, with `summary_line()`
+  and `format_report()` producing mode-appropriate output.
+  Pre-1.3 callers that read `report.verdicts` keep working —
+  in append / replace modes the list is simply empty.
+
+- **No schema bump.** `## Revisits` content is indexed by kb-mcp as
+  regular paper body text (FTS5 + vectors via the existing chunking
+  path); no `kind=revisit` or schema migration. Users can search
+  revisits as normal paper content. First-class revisit indexing
+  (`list_revisits` tool / separate chunk kind) was considered and
+  deferred — see design notes in the PR.
+
+### Notes on interaction with earlier features
+
+- The OpenRouter default fulltext model
+  (`openai/gpt-oss-120b:free`, 1.2.1) combined with `--mode append`
+  (1.3.0) gives you a risk-free path to experiment with cheap
+  models: every re-read is additive, nothing destructive. The
+  original paid-model baseline (written by `kb-importer --fulltext`)
+  stays authoritative; revisit blocks accumulate as a historical
+  record.
+
+- `kb-mcp reindex --force` is NOT required for 1.2.1 → 1.3.0.
+  Schema unchanged. The only workflow change a user might want is
+  to pick up revisits in the FTS / vector index, which happens on
+  the next `kb-mcp index` run automatically.
+
+### Verification
+
+- Four lints + byte-compile clean.
+- 480/480 unit tests (was 457; +23 covers the three new test files:
+  13 for marker / prepend / format logic, 5 for preserved round-
+  trip in kb_importer, 6 for doctor detection of malformed
+  regions).
+- 46/46 e2e.
+- post-install smoke: 14 pass / 2 expected skip (no OpenAI key /
+  S2 rate-limit).
+- `pre_release_full_check.sh` green end-to-end; release zip builds
+  clean.
+
 ## [1.2.1] — 2026-04-24
 
 Merge of PR #1 (claude-code-agent robustness improvements) plus two

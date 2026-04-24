@@ -6,7 +6,7 @@ packages.
 """
 from __future__ import annotations
 
-__version__ = "1.2.1"
+__version__ = "1.3.0"
 
 # Re-exports so downstream can write `from kb_core import safe_resolve`.
 from .paths import (
@@ -32,6 +32,10 @@ from .schema import (
     FULLTEXT_START,
     FULLTEXT_END,
     SECTION_COUNT,
+    REVISITS_START,
+    REVISITS_END,
+    REVISIT_BLOCK_START,
+    REVISIT_BLOCK_END,
 )
 from .workspace import (
     find_workspace_root,
@@ -78,6 +82,10 @@ __all__ = [
     "FULLTEXT_START",
     "FULLTEXT_END",
     "SECTION_COUNT",
+    "REVISITS_START",
+    "REVISITS_END",
+    "REVISIT_BLOCK_START",
+    "REVISIT_BLOCK_END",
     # workspace
     "find_workspace_root",
     "find_kb_root",
