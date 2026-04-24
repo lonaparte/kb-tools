@@ -340,12 +340,16 @@ mkdir -p workspace/{.ee-kb-tools,ee-kb,zotero/storage}
 # example; `research`, `docs`, wherever you keep work.)
 
 cd workspace/.ee-kb-tools
-git clone <repo-url> .        # or copy the three package directories in
+git clone <repo-url> .        # or copy the five package directories in
 python -m venv .venv
 source .venv/bin/activate
+# kb_core pins the cross-package version; install it first so the
+# others resolve their `kb-core==` dep from the local checkout.
+pip install -e ./kb_core
 pip install -e ./kb_write
 pip install -e "./kb_mcp[write,gemini]"
 pip install -e ./kb_importer
+pip install -e ./kb_citations
 ```
 
 Step 2 — Initialize `ee-kb/` scaffolds.

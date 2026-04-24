@@ -5,6 +5,59 @@ All notable changes to ee-kb-tools.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is our own (calendar-ish, per-major-iteration).
 
+## [0.29.5] — 2026-04-24
+
+Finishes the 0.29.4 workspace-autodetect fix. A second audit caught
+that 0.29.4 only fixed the config-file lookup, not the `kb_root` /
+`zotero_storage_dir` derivation — so a pip-wheel user who cd'd into
+their workspace got "zotero_storage_dir is required" despite a
+correctly-placed scaffolded config.
+
+### Fixed
+
+- **`kb_importer.config.load_config()` step 4b now autodetects
+  kb_root and zotero_storage_dir via CWD first.** Previously this
+  block walked up from `Path(__file__).resolve()` only — the install
+  location. That works for `scripts/deploy.sh` layouts (venv inside
+  `.ee-kb-tools/`) but silently misses for pip-wheel installs where
+  the venv lives elsewhere. Worse, in the editable-install case it
+  resolved to the *dev* workspace instead of the user's actual
+  workspace, because the CWD was never consulted.
+
+  Now runs two passes: (a) `find_workspace_root()` from CWD, (b)
+  the old install-location walk as compatibility fallback. CWD
+  takes precedence — the user's current directory authoritatively
+  names the workspace. Verified end-to-end: fresh venv under
+  `/tmp/kbtest/` with wheels installed + a workspace at
+  `/tmp/ws/` + `cd /tmp/ws/ee-kb && kb-importer status` now
+  resolves `kb_root=/tmp/ws/ee-kb` and
+  `zotero_storage=/tmp/ws/zotero/storage` without any env vars
+  or CLI flags.
+
+  The 0.29.4 fix to `_find_workspace_config` (config file lookup)
+  was correct and is retained — this patch covers the second
+  half of the same pattern that was missed.
+
+### Changed
+
+- **README "Bootstrapping a new KB" section** updated: install
+  block now lists all five packages (was missing `kb_core` and
+  `kb_citations`), with `kb_core` first so the others resolve
+  their `kb-core==` dep from the local checkout. The "copy the
+  three package directories in" comment was stale since the
+  kb_core extraction and the 0.29.0 kb_citations split; now
+  reads "five package directories".
+
+### Verification
+
+- Unit tests: all passing.
+- Cross-module lint + package consistency + no-secrets +
+  no-system-paths: clean.
+- Reproduced the failure on an unpatched 0.29.4 wheel (cwd-in-
+  workspace + venv-outside-workspace → "zotero_storage_dir is
+  required") then confirmed the patched 0.29.5 wheel resolves
+  both paths correctly in the same setup.
+
 ## [0.29.4] — 2026-04-23
 
 Pre-release audit of the pushed 0.29.3 caught six real issues —

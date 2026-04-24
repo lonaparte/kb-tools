@@ -220,22 +220,55 @@ def load_config(
     kr = kb_root or os.environ.get("KB_ROOT") or raw.get("kb_root")
 
     # 4b. Last-resort: workspace autodetect for both kb_root and
-    #     zotero_storage_dir. Fills whichever is still missing.
-    #     Walks up for `.ee-kb-tools/`, then reads sibling directories.
-    #     Does not depend on kb_write (standalone-friendly).
+    #     zotero_storage_dir. Fills whichever is still missing by
+    #     looking for an `ee-kb/` and a `zotero/storage/` sibling
+    #     next to `.ee-kb-tools/`.
+    #
+    #     Two-step search, same pattern as `_find_workspace_config`
+    #     above:
+    #       (a) CWD-based walk-up (find_workspace_root). This is the
+    #           authoritative source — the user's CWD tells us WHICH
+    #           workspace they mean. Necessary for the pip-wheel case
+    #           where the venv lives outside the workspace; also
+    #           necessary in the editable-install case to prevent the
+    #           install-location walk from resolving to the DEV
+    #           workspace instead of the user's.
+    #       (b) Install-location walk (from __file__). Retained as a
+    #           compatibility path for the `scripts/deploy.sh` layout
+    #           where the venv lives inside `.ee-kb-tools/.venv/` and
+    #           find_workspace_root would only succeed if the user
+    #           also happened to cd into the workspace. Harmless
+    #           extra pass otherwise.
+    #
+    #     0.29.4 only fixed (2a) for `_find_workspace_config`; this
+    #     block continued to use install-location-only autodetect,
+    #     so pip-wheel users got "zotero_storage_dir is required"
+    #     despite a scaffolded config being in place. Fixed in
+    #     0.29.5.
     if not kr or not storage_value:
+        from kb_core.workspace import find_workspace_root
+
+        candidates: list[Path] = []
+        ws = find_workspace_root()
+        if ws is not None:
+            candidates.append(ws)
+
         here = Path(__file__).resolve()
         for p in [here] + list(here.parents):
             if p.name == ".ee-kb-tools":
-                ws_parent = p.parent
-                if not kr:
-                    kb_candidate = ws_parent / "ee-kb"
-                    if kb_candidate.exists():
-                        kr = str(kb_candidate)
-                if not storage_value:
-                    storage_candidate = ws_parent / "zotero" / "storage"
-                    if storage_candidate.exists():
-                        storage_value = str(storage_candidate)
+                candidates.append(p.parent)
+                break
+
+        for ws_parent in candidates:
+            if not kr:
+                kb_candidate = ws_parent / "ee-kb"
+                if kb_candidate.exists():
+                    kr = str(kb_candidate)
+            if not storage_value:
+                storage_candidate = ws_parent / "zotero" / "storage"
+                if storage_candidate.exists():
+                    storage_value = str(storage_candidate)
+            if kr and storage_value:
                 break
 
     # 5. Resolve Zotero source mode.
