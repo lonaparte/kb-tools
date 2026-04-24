@@ -1,0 +1,34 @@
+# kb-citations configuration
+#
+# All fields optional; shown here with defaults. API keys go in your
+# shell rc (~/.bashrc), not in this file.
+#
+# Path resolution: kb_root autodetected via workspace layout
+# (sibling `ee-kb/` of this `.ee-kb-tools/`). Override with
+# --kb-root or $KB_ROOT.
+
+# Provider: "semantic_scholar" (default) or "openalex".
+provider: semantic_scholar
+
+# Semantic Scholar: an API key is optional but recommended (raises
+# rate limit from 100/5min to 1 req/s). Set SEMANTIC_SCHOLAR_API_KEY
+# in your shell rc; reference the env var name here:
+# api_key_env: SEMANTIC_SCHOLAR_API_KEY
+
+# OpenAlex: requires a contact email for the "polite pool". Set
+# OPENALEX_MAILTO in your shell rc, or put the actual email here
+# (this is just an email, not a secret, so both are OK).
+# mailto: you@example.com
+
+# Per-paper caps.
+max_refs: 1000       # outgoing references (what this paper cites)
+max_cites: 200       # incoming citations (who cites this paper)
+
+# Skip papers whose cache is newer than N days. 0 = always refetch.
+freshness_days: 30
+
+# Also fetch incoming citations, not just outgoing references.
+# Doubles API call count. Useful for finding "foundation papers"
+# (high incoming-citation count) and "bridge papers" (in-degree
+# spread across multiple subfields).
+fetch_citations: false

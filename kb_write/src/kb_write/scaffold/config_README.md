@@ -6,11 +6,12 @@ path.
 
 ## Files
 
-| File                  | Consumer       | Required? |
-|-----------------------|----------------|-----------|
-| `kb-mcp.yaml`         | `kb-mcp`       | No — all fields have defaults |
-| `kb-importer.yaml`    | `kb-importer`  | Typically yes — Zotero userID needs to be set here |
-| `README.md`           | humans         | This file |
+| File                  | Consumer        | Required? |
+|-----------------------|-----------------|-----------|
+| `kb-mcp.yaml`         | `kb-mcp`        | No — all fields have defaults |
+| `kb-importer.yaml`    | `kb-importer`   | Typically yes — Zotero userID needs to be set here for web-mode |
+| `kb-citations.yaml`   | `kb-citations`  | No — defaults fine; tune provider / rate limits / freshness here if needed |
+| `README.md`           | humans          | This file |
 
 ## What does NOT go here
 

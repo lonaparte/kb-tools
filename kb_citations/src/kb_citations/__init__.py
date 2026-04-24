@@ -7,7 +7,7 @@ cache lands under `<kb_root>/.kb-mcp/citations/`. Then run
 
 See README.md and the `kb-citations --help` CLI for usage.
 """
-__version__ = "0.29.2"
+__version__ = "0.29.3"
 
 from .config import CitationsContext
 from .provider import Reference, normalize_doi

@@ -11,6 +11,13 @@ import logging
 
 from ..config import Config
 from ..zotero_reader import ZoteroReader
+# 0.29.3: _auto_commit_single_paper was moved to import_pipeline in
+# the 0.28.0 G-split (kb-importer: split 1505-line import_cmd.py
+# into per-phase modules) but this file's two call sites never got
+# an import line added. The fulltext path's per-paper git commit
+# therefore raised NameError at runtime. Caught by the 0.29.3
+# cross-module-import lint.
+from .import_pipeline import _auto_commit_single_paper
 
 log = logging.getLogger(__name__)
 

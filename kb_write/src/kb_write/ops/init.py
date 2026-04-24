@@ -166,10 +166,27 @@ def init_kb(
                 continue
             try:
                 content = _read_static_scaffold(res_name)
-            except FileNotFoundError:
-                # Scaffold resource missing — skip silently rather than
-                # crash init.
-                continue
+            except FileNotFoundError as e:
+                # 0.29.3: fail loud. Pre-0.29.3 this was a silent
+                # `continue`, which meant a packaging regression
+                # (scaffold file missing from the wheel) produced a
+                # KB with no config and no error. That class of
+                # failure is how 0.29.1 / 0.29.2 both shipped
+                # without the three config yamls. Refuse to continue
+                # if kb-write was installed from a broken package;
+                # scripts/check_package_consistency also asserts
+                # these files are present as a release-time gate,
+                # but this runtime check is the second line of
+                # defense for the user who actually tries `kb-write
+                # init`.
+                raise RuntimeError(
+                    f"packaging error: kb-write is missing scaffold "
+                    f"resource {res_name!r} (needed for "
+                    f".ee-kb-tools/config/{filename}). Re-install "
+                    f"kb-write from a correctly built wheel — the "
+                    f"file should live at kb_write/scaffold/ inside "
+                    f"the installed package."
+                ) from e
             atomic_write(dest, content)
             created.append(rel_label)
 

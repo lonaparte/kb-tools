@@ -5,6 +5,95 @@ All notable changes to ee-kb-tools.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is our own (calendar-ish, per-major-iteration).
 
+## [0.29.3] — 2026-04
+
+Repairs 0.29.2 — which claimed to fix scaffold-template packaging
+but actually landed with the three templates never committed to
+git, and separately ships a runtime NameError fix from the 0.28
+kb-importer split.
+
+### Fixed
+
+- **Scaffold config yamls now actually in the repo.**
+  0.29.2 added `force-include` clauses in `kb_write/pyproject.toml`
+  pointing at
+    kb_write/src/kb_write/scaffold/config_kb_importer.yaml
+    kb_write/src/kb_write/scaffold/config_kb_mcp.yaml
+    kb_write/src/kb_write/scaffold/config_kb_citations.yaml
+  but those files were never committed — `.gitignore` has bare-name
+  rules `config_kb_*.yaml` (intended to catch user real-config
+  copies leaking into the repo) that also shadowed the scaffold
+  templates. The files existed on my local disk, so Hatch's
+  force-include succeeded at build time and the wheel I tested
+  did have them; but anyone cloning from GitHub got a working
+  tree without the files. A wheel built from such a clone would
+  either fail or silently produce an empty scaffold.
+
+  Root fix: `git add -f` the three yamls. They're now properly
+  tracked. A new consistency check
+  (`check_scaffold_templates_present` in
+  `scripts/check_package_consistency.py`) asserts, at release
+  time, that the four scaffold files exist on disk AND appear in
+  `git ls-files`. Running the consistency script would have
+  caught 0.29.2 pre-push.
+
+- **`_auto_commit_single_paper` missing import in
+  `import_fulltext.py`.** The 0.28.0 G-split moved this helper
+  from the monolithic `import_cmd.py` into `import_pipeline.py`
+  but this file's two call sites (lines 567 and 800) never got
+  an `import` added for it. The fulltext pipeline's per-paper
+  git commit path therefore raised `NameError:
+  _auto_commit_single_paper` at runtime. Unit tests didn't cover
+  that path. Fixed by adding
+  `from .import_pipeline import _auto_commit_single_paper`.
+
+- **`kb-write init` no longer silently swallows missing-scaffold
+  errors.** Pre-0.29.3, a missing scaffold template (e.g. the
+  0.29.1 / 0.29.2 packaging regression) triggered a defensive
+  `try/except FileNotFoundError: continue`, so operators saw no
+  config get created AND no error. Now raises `RuntimeError`
+  with a pointed "packaging error: re-install from a correctly
+  built wheel" message. Second line of defence behind the new
+  consistency check.
+
+### Added
+
+- **`scripts/check_cross_module_imports.py`** — AST-scans the four
+  v0.28 split groups (kb_importer/commands/, kb_write/commands/,
+  kb_mcp/(indexer submodules), kb_mcp/(server_cli)) and flags any
+  function/class used in one sibling but defined in another
+  without an import line. Catches the class of bug that produced
+  the `_auto_commit_single_paper` NameError — a symbol present in
+  `defined_by`, referenced but not imported, and not locally
+  bound. Currently clean across the whole repo.
+
+- **`check_package_consistency.py` gains
+  `check_scaffold_templates_present`** — asserts the four scaffold
+  files exist on disk AND are in `git ls-files`. The "tracked"
+  half specifically defends against `.gitignore`-shadowed files
+  that appear to work for editable installs and local builds but
+  break fresh clones.
+
+### Changed
+
+- **`config_kb_importer.yaml` scaffold** flipped `source_mode:
+  live` → `source_mode: web` to match the 0.28.0 code default. The
+  old value would have silently given new users the `live` (needs
+  Zotero desktop) path instead of the now-default `web` path.
+- **`config_README.md`** adds the missing `kb-citations.yaml`
+  row to the file table.
+
+### Verification (what I actually ran this time)
+
+- `python -m build --wheel --sdist` on a fresh venv (not editable)
+  → wheel contains all three scaffold yamls: `config_kb_*.yaml`
+- `pip install kb_core-*.whl kb_write-*.whl` into another fresh
+  venv → `kb-write init` in a workspace writes
+  `.ee-kb-tools/config/{kb-mcp,kb-importer,kb-citations}.yaml +
+  README.md` — four files, all four created.
+- Both new lint scripts (cross-module + scaffold-presence) pass
+  on current tree and fire on the un-tracked case.
+
 ## [0.29.2] — 2026-04
 
 Packaging bug fix. 0.29.1 shipped a wheel that was missing three

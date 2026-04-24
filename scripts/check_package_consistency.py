@@ -506,6 +506,73 @@ def check_schema_history_complete() -> list[str]:
     return errs
 
 
+def check_scaffold_templates_present() -> list[str]:
+    """Every config scaffold template that `kb-write init` will try
+    to read MUST exist on disk AND be tracked by git (not
+    gitignore-shadowed).
+
+    Added in 0.29.3 after the config_kb_*.yaml scaffolds — which
+    0.29.2's CHANGELOG claimed to be fixed via force-include in
+    pyproject — were actually never committed to the repo at all.
+    `.gitignore` had rules for those filenames (intended to catch
+    user real-config copies) that also blocked the scaffold
+    templates from `git add`. Locally the files existed and
+    Hatch's force-include shipped them, so all of my testing
+    passed. But anyone cloning from GitHub got a working tree
+    without the templates, a wheel built against that tree would
+    fail (force-include can't include files that don't exist),
+    and `kb-write init` had nothing to read.
+
+    This lint reproduces the user-visible check: disk presence +
+    `git ls-files` presence. Catches the same class of bug.
+    """
+    errs: list[str] = []
+    scaffold = REPO / "kb_write" / "src" / "kb_write" / "scaffold"
+    required = [
+        "config_kb_importer.yaml",
+        "config_kb_mcp.yaml",
+        "config_kb_citations.yaml",
+        "config_README.md",
+    ]
+
+    # 1. Disk presence.
+    missing_on_disk = [n for n in required if not (scaffold / n).exists()]
+    if missing_on_disk:
+        errs.append(
+            f"scaffold templates missing on disk under "
+            f"{scaffold.relative_to(REPO)}: {missing_on_disk}. "
+            f"`kb-write init` cannot produce ee-kb-tools/config/ "
+            f"without these."
+        )
+
+    # 2. Tracked-in-git presence — catches the 0.29.2 regression.
+    # Use git ls-files; if not inside a git repo, skip this half.
+    import subprocess
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(REPO), "ls-files",
+             "kb_write/src/kb_write/scaffold/"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if r.returncode == 0:
+            tracked = set(Path(x).name for x in r.stdout.splitlines())
+            not_tracked = [n for n in required if n not in tracked]
+            if not_tracked:
+                errs.append(
+                    f"scaffold templates NOT in git (possibly "
+                    f"gitignore-shadowed, use `git add -f` to track): "
+                    f"{not_tracked}. These ship as package data; a "
+                    f"wheel built from a repo without them would be "
+                    f"broken, even if they exist locally for editable "
+                    f"installs."
+                )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        # git not available — just accept disk presence.
+        pass
+
+    return errs
+
+
 def main() -> int:
     errors: list[str] = []
     errors.extend(check_versions())
@@ -513,6 +580,7 @@ def main() -> int:
     errors.extend(check_agent_rules_sync())
     errors.extend(check_fulltext_markers_sync())
     errors.extend(check_schema_history_complete())
+    errors.extend(check_scaffold_templates_present())
     if errors:
         print("✗ package consistency check failed:", file=sys.stderr)
         for e in errors:
@@ -522,7 +590,8 @@ def main() -> int:
     v = (REPO / "VERSION").read_text().strip()
     print(
         f"✓ package consistency OK (VERSION={v}, kb_core shim identity, "
-        f"agent-rules parity, fulltext-markers parity, schema history complete)"
+        f"agent-rules parity, fulltext-markers parity, schema history "
+        f"complete, scaffold templates present+tracked)"
     )
     return 0
 

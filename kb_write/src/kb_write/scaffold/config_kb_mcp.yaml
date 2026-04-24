@@ -1,0 +1,89 @@
+# kb-mcp configuration
+#
+# All fields optional; shown here with defaults for discoverability.
+# API keys go in your shell rc (~/.bashrc), NEVER in this file.
+#
+# Path resolution: if kb_root is omitted, kb-mcp autodetects the
+# sibling `ee-kb/` directory from this file's location
+# (.ee-kb-tools/ parent).
+
+# kb_root: /absolute/path/to/ee-kb       # (optional) override autodetect
+# zotero_root: /absolute/path/to/zotero  # (optional) for attachment resolution
+
+logging:
+  level: info                            # debug | info | warning | error
+  # file: /path/to/kb-mcp.log            # omit → stderr only
+
+embeddings:
+  enabled: true
+
+  # Provider choice — picks which API to use.
+  #
+  #   "openai"  (default): OpenAI text-embedding-3-small, 1536 dim.
+  #             Also works with any OpenAI-compatible endpoint — set
+  #             `openai_base_url` below. See examples.
+  #   "gemini"            : Google Gemini gemini-embedding-001, 1536
+  #             dim by default (MRL-truncated).
+  #
+  # Both output 1536-dim vectors by default so switching providers
+  # doesn't force a rebuild of the vec0 table. The stored
+  # `embedding_model` column records which model produced each row;
+  # `kb-mcp index` re-embeds any paper whose model differs.
+  provider: openai
+
+  # model: (omit to use provider default)
+  #   openai → text-embedding-3-small (1536 dim)
+  #   gemini → gemini-embedding-001 (1536 dim, MRL-truncated)
+  # dim: 1536                             # output dimension
+
+  # Env var NAMES (not values). Put the actual keys in ~/.bashrc:
+  #   export OPENAI_API_KEY=sk-...
+  #   export GEMINI_API_KEY=...
+  openai_api_key_env: OPENAI_API_KEY
+  gemini_api_key_env: GEMINI_API_KEY
+
+  # ----------------------------------------------------------------
+  # OpenAI-compatible endpoints
+  # ----------------------------------------------------------------
+  # The "openai" provider works with ANY server that speaks the
+  # OpenAI /v1/embeddings protocol. Set `openai_base_url` to your
+  # server; the `openai_api_key_env` still controls which env var
+  # holds the bearer token (use a dummy value for servers that
+  # don't check auth).
+  #
+  # Examples (uncomment one):
+  #
+  # 1. Ollama running locally with nomic-embed-text:
+  #    export OPENAI_API_KEY=ollama    # any value; Ollama ignores it
+  # openai_base_url: http://localhost:11434/v1
+  # model: nomic-embed-text
+  # dim: 768
+  #
+  # 2. vLLM or LocalAI with bge-large-en-v1.5:
+  # openai_base_url: http://localhost:8080/v1
+  # model: BAAI/bge-large-en-v1.5
+  # dim: 1024
+  #
+  # 3. Qwen / DashScope OpenAI-compatible endpoint:
+  #    export OPENAI_API_KEY=sk-your-dashscope-key
+  # openai_base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+  # model: text-embedding-v3
+  # dim: 1024
+  #
+  # Note: DeepSeek does NOT provide an embedding endpoint — their API
+  # is chat-only. Don't set openai_base_url to api.deepseek.com for
+  # embeddings; it will 404.
+
+  batch_size: 100                        # embeddings API call size
+
+# SQLite storage behavior.
+store:
+  # Journal mode:
+  #   "delete" (default) — single-file DB; `.kb-mcp/` rsyncs
+  #       cleanly with no WAL/SHM sidecars. Best for single-user
+  #       laptops and sync-via-Syncthing setups.
+  #   "wal"              — better concurrent-read tolerance when a
+  #       long-running MCP server runs alongside frequent re-indexes.
+  #       Adds .sqlite-wal + .sqlite-shm files next to index.sqlite.
+  #       Use on multi-process / server deployments.
+  journal_mode: delete

@@ -1,0 +1,28 @@
+# kb-importer configuration
+#
+# Zotero API credentials live here by reference (env var names).
+# The actual ZOTERO_API_KEY is set in your shell rc (~/.bashrc).
+
+zotero:
+  # Your Zotero user ID (numeric, not username). Find yours at
+  # https://www.zotero.org/settings/keys — shown as "Your userID
+  # for use in API calls".
+  # library_id: ""              # e.g. "1234567" (string, not int)
+
+  # Library type: "user" (personal) or "group" (shared).
+  library_type: user
+
+  # Source mode (default flipped live → web in 0.28.0):
+  #   "web"  — Zotero cloud API (api.zotero.org). Requires
+  #            library_id (above) + ZOTERO_API_KEY in env. Works
+  #            headlessly; no Zotero app needed. THIS IS THE
+  #            RECOMMENDED DEFAULT.
+  #   "live" — Zotero's local HTTP API at localhost:23119.
+  #            Requires Zotero desktop app running. No key needed.
+  source_mode: web
+
+  # Env var that holds your Zotero API key (only used in web mode).
+  api_key_env: ZOTERO_API_KEY
+
+logging:
+  level: info
