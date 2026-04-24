@@ -122,6 +122,47 @@ def _parse_positive_int(value, *, field: str) -> int:
     return iv
 
 
+def _validate_log_level(level: str) -> str:
+    """Validate log level string against Python's valid logging levels.
+
+    Accepts: debug, info, warning, error, critical (case-insensitive).
+    Raises ConfigError on invalid level.
+    """
+    valid_levels = {"debug", "info", "warning", "error", "critical"}
+    level_lower = level.lower().strip()
+    if level_lower not in valid_levels:
+        raise ConfigError(
+            f"Invalid log_level {level!r}. Must be one of: "
+            f"{', '.join(sorted(valid_levels))}"
+        )
+    return level_lower
+
+
+def _validate_batch_size(size: int, provider: str) -> int:
+    """Validate and cap batch_size per provider limits.
+
+    Provider limits:
+    - OpenAI: 2048 inputs/call
+    - Gemini: 100 inputs/call
+    - OpenRouter: 2048 inputs/call (inherits OpenAI limits)
+
+    If size exceeds the limit, log a warning and cap to the maximum.
+    """
+    import logging
+    log = logging.getLogger(__name__)
+
+    limits = {"openai": 2048, "gemini": 100, "openrouter": 2048}
+    max_size = limits.get(provider, 100)  # default to most conservative
+
+    if size > max_size:
+        log.warning(
+            f"embeddings.batch_size {size} exceeds {provider} limit {max_size}, "
+            f"capping to {max_size}"
+        )
+        return max_size
+    return size
+
+
 @dataclass
 class Config:
     kb_root: Path
@@ -255,7 +296,7 @@ def load_config(
     return Config(
         kb_root=_expand(kr),
         zotero_root=_expand(zotero_r) if zotero_r else None,
-        log_level=log_cfg.get("level", "info"),
+        log_level=_validate_log_level(log_cfg.get("level", "info")),
         log_file=_expand(log_file) if log_file else None,
         embeddings_enabled=_parse_bool(
             emb_cfg.get("enabled"), default=True,
@@ -271,9 +312,12 @@ def load_config(
             emb_cfg.get("openrouter_api_key_env", "OPENROUTER_EMBEDDING_API_KEY")
         ),
         openrouter_base_url=emb_cfg.get("openrouter_base_url"),
-        embedding_batch_size=_parse_positive_int(
-            emb_cfg.get("batch_size", 100),
-            field="embeddings.batch_size",
+        embedding_batch_size=_validate_batch_size(
+            _parse_positive_int(
+                emb_cfg.get("batch_size", 100),
+                field="embeddings.batch_size",
+            ),
+            provider,
         ),
         journal_mode=journal_mode,
     )

@@ -140,8 +140,13 @@ class OpenAIEmbeddingProvider:
             ) from e
 
         # Response is shape {data: [{embedding: [...]}, ...], usage: {...}}
-        vectors = [d.embedding for d in resp.data]
-        prompt_tokens = int(getattr(resp.usage, "prompt_tokens", 0) or 0)
+        try:
+            vectors = [d.embedding for d in resp.data]
+            prompt_tokens = int(getattr(resp.usage, "prompt_tokens", 0) or 0)
+        except (AttributeError, TypeError) as e:
+            raise EmbeddingError(
+                f"{self._provider_label()} returned unexpected response format: {e}"
+            ) from e
         return EmbeddingResult(
             vectors=vectors,
             model=self.model_name,
@@ -353,17 +358,22 @@ class GeminiEmbeddingProvider:
         # Each embedding carries per-content stats. Sum them for the
         # batch total. Gracefully handle older SDK versions that
         # don't expose statistics (falls back to 0, same as before).
-        vectors = [list(e.values) for e in resp.embeddings]
-        total_tokens = 0
-        for e in resp.embeddings:
-            stats = getattr(e, "statistics", None)
-            if stats is not None:
-                tc = getattr(stats, "token_count", None)
-                if tc is not None:
-                    try:
-                        total_tokens += int(tc)
-                    except (TypeError, ValueError):
-                        pass
+        try:
+            vectors = [list(e.values) for e in resp.embeddings]
+            total_tokens = 0
+            for e in resp.embeddings:
+                stats = getattr(e, "statistics", None)
+                if stats is not None:
+                    tc = getattr(stats, "token_count", None)
+                    if tc is not None:
+                        try:
+                            total_tokens += int(tc)
+                        except (TypeError, ValueError):
+                            pass
+        except (AttributeError, TypeError) as e:
+            raise EmbeddingError(
+                f"Gemini returned unexpected response format: {e}"
+            ) from e
         return EmbeddingResult(
             vectors=vectors,
             model=self.model_name,
