@@ -428,6 +428,13 @@ def build_from_config(cfg) -> EmbeddingProvider | None:
                        or "text-embedding-3-small"),
                 api_key_env=getattr(cfg, "openai_api_key_env", "OPENAI_API_KEY"),
                 base_url=getattr(cfg, "openai_base_url", None),
+                # Required for OpenAI-compatible gateways (Ollama /
+                # vLLM / LocalAI / DashScope) where the model's name
+                # isn't in our _model_dim table. Without this, the
+                # scaffold-documented `dim: 768` override was silently
+                # ignored and the provider errored out on unknown
+                # model names.
+                dim_override=getattr(cfg, "embedding_dim", None),
             )
         except EmbeddingError as e:
             log.warning("OpenAI embedding provider unavailable: %s", e)

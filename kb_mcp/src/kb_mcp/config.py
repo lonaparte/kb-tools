@@ -330,7 +330,17 @@ def load_config(
         ),
         embedding_provider=provider,
         embedding_model=_resolve_embedding_model(provider, emb_cfg.get("model")),
-        embedding_dim=emb_cfg.get("dim"),
+        # embeddings.dim is optional. When present, validate it the
+        # same way as other numeric fields (reject bool / float / 0 /
+        # negatives / bad strings) so YAML typos fail loudly at load
+        # time instead of at INSERT INTO paper_chunks_vec time.
+        embedding_dim=(
+            _parse_positive_int(
+                emb_cfg.get("dim"), field="embeddings.dim",
+            )
+            if emb_cfg.get("dim") is not None
+            else None
+        ),
         openai_api_key_env=str(emb_cfg.get("openai_api_key_env", "OPENAI_API_KEY")),
         openai_base_url=emb_cfg.get("openai_base_url"),
         gemini_api_key_env=str(emb_cfg.get("gemini_api_key_env", "GEMINI_API_KEY")),
