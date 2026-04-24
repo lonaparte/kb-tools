@@ -5,6 +5,44 @@ All notable changes to ee-kb-tools.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is our own (calendar-ish, per-major-iteration).
 
+## [0.29.7] — 2026-04-24
+
+Tightens argparse validators to close silent-corruption /
+silent-rejection-of-documented-sentinel gaps spotted while auditing
+every numeric flag across the four CLIs.
+
+### Fixed
+
+- **`kb-importer list --limit <neg>` no longer silently slices from
+  the end.** `--limit` was `type=int, default=0` with help claiming
+  "0 = no limit". Negative values took the Python slice-from-end
+  path (`sorted_keys[:-5]` drops the last 5), producing quietly
+  wrong output instead of an error. Switched to `_nonnegative_int`
+  (same helper introduced for `kb-citations --freshness-days` in
+  0.29.4), so `--limit -5` now errors with `must be >= 0, got -5`
+  while `--limit 0` still means "no limit".
+
+- **`kb-importer import --fulltext-max-tokens <= 0` now rejected.**
+  The flag was `type=int`, so `--fulltext-max-tokens 0` was accepted
+  — but a zero/negative token budget just produces truncated LLM
+  responses and a confusing "non-JSON twice" error downstream.
+  Switched to `_positive_int`.
+
+### Added
+
+- **`kb_importer/commands/_shared.py`** — local `_positive_int` /
+  `_nonnegative_int` argparse validators, matching the pattern in
+  `kb_write/commands/_shared.py`. Both imported by `list_cmd.py`
+  and `import_cmd.py` so validator definitions don't drift.
+
+### Verification
+
+- All four lints + unit tests (404/404) green.
+- Empirical: `kb-importer list papers --limit -5` prints
+  `must be >= 0, got -5`; `--limit 0 --help` still documents
+  "no limit"; `--fulltext-max-tokens 0` prints `must be positive,
+  got 0`.
+
 ## [0.29.6] — 2026-04-24
 
 Finishes the 0.29.5 workspace-autodetect tidy-up, plus adds a

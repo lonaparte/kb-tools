@@ -43,6 +43,7 @@ from ..state import (
     scan_attachments,
 )
 from ..zotero_reader import ZoteroItem, ZoteroReader
+from ._shared import _positive_int
 
 log = logging.getLogger(__name__)
 
@@ -160,7 +161,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
              "(the way v22 and earlier behaved).",
     )
     p.add_argument(
-        "--fulltext-max-tokens", type=int, default=8000,
+        "--fulltext-max-tokens", type=_positive_int, default=8000,
         help="Max output tokens per summary request (default 8000). "
              "Gemini 2.5/3.x models consume part of this as thinking "
              "tokens before emitting JSON; under-sizing it causes "

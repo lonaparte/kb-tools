@@ -89,7 +89,7 @@ precisely:
   installed, but the server still starts). `pyproject.toml` in each
   package records these as real dependencies.
 
-Practically: for a full install, install all four into one venv.
+Practically: for a full install, install all five into one venv.
 For a read-only deployment (e.g. a web server that hosts kb-mcp over
 MCP but doesn't write), you can install just `kb_mcp` + your
 embedding provider extras and skip the rest.

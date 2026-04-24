@@ -7,6 +7,7 @@ import logging
 from ..config import Config
 from ..state import imported_note_keys, imported_paper_keys
 from ..zotero_reader import ZoteroReader
+from ._shared import _nonnegative_int
 
 log = logging.getLogger(__name__)
 
@@ -44,7 +45,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
         ),
     )
     p.add_argument(
-        "--limit", type=int, default=0,
+        "--limit", type=_nonnegative_int, default=0,
         help=(
             "Max rows to print (0 = no limit). Applied efficiently: "
             "only the first N matches are fetched from Zotero, not all."
