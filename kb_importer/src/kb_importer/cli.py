@@ -26,8 +26,8 @@ def build_parser() -> argparse.ArgumentParser:
         prog="kb-importer",
         description=(
             "Translate a Zotero library into KB markdown files. "
-            "Talks to the live Zotero local API for metadata; finds PDFs "
-            "in the configured storage directory."
+            "Reads metadata from the Zotero web API by default; finds "
+            "PDFs in the configured storage directory."
         ),
     )
     parser.add_argument("--version", action="version",
@@ -45,8 +45,9 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["live", "web"],
         dest="zotero_source_mode",
         help=(
-            "Metadata source: 'live' (local Zotero at localhost:23119, "
-            "default) or 'web' (cloud API, needs library_id + API key)."
+            "Metadata source: 'web' (cloud API, needs library_id + "
+            "API key; default since 0.28.0) or 'live' (local Zotero "
+            "at localhost:23119, requires Zotero running locally)."
         ),
     )
     parser.add_argument(

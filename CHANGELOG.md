@@ -5,6 +5,91 @@ All notable changes to ee-kb-tools.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is our own (calendar-ish, per-major-iteration).
 
+## [0.29.4] — 2026-04-23
+
+Pre-release audit of the pushed 0.29.3 caught six real issues —
+mostly paper cuts, one runtime blocker. Fixing them required
+extending the cross-module lint to also catch stdlib-module-used-
+but-not-imported, which immediately found two more copies of the
+same bug the reviewer had spotted.
+
+### Fixed
+
+- **`import sys` missing in three `kb_importer.commands` modules.**
+  The 0.28.0 G-split moved error-path `sys.stderr` writes from
+  `import_cmd.py` into `import_fulltext.py`, `import_pipeline.py`,
+  and `import_keys.py` without carrying the `import sys` line.
+  Every error path in those files raised `NameError: sys` instead
+  of printing the intended warning. Added `import sys` to all
+  three. The reviewer flagged `import_fulltext.py`; the extended
+  lint (below) caught the other two.
+
+- **Config autodetect now works under pip-wheel installs, not just
+  `scripts/deploy.sh` layouts.** `kb_importer._find_workspace_config`,
+  `kb_citations.config.find_workspace_config`, and
+  `kb_citations.config.kb_root_from_env` previously called only
+  `kb_core.workspace.find_tools_dir()` — which walks up from the
+  installed module's location. A pip-installed wheel lives in
+  `site-packages/`, far from any user's workspace, so that walk
+  always terminated outside `.ee-kb-tools/` and autodetect returned
+  None. Added a second step: if `find_tools_dir()` misses, fall
+  back to `find_workspace_root()` which walks up from CWD. Now
+  `cd .ee-kb-tools && kb-importer status` (or `kb-citations
+  status`) resolves its config from the non-editable install.
+
+- **`kb-citations --freshness-days 0` no longer rejected by argparse.**
+  Help text documented 0 as "force refetch" (and the downstream
+  `_build_ctx` maps 0 → None correctly), but the argparse validator
+  was `_positive_int`, which rejected any non-positive value. Added
+  `_nonnegative_int` and wired it to `--freshness-days` only. Other
+  numeric flags (`--max-refs`, `--max-cites`, `--max-api-calls`,
+  `--min-cites`, `--limit`) still use `_positive_int` — zero is
+  meaningless for them.
+
+- **`kb-importer --zotero-source` help text claimed `live` was the
+  default**, three releases after 0.28.0 flipped the default to
+  `web`. Rewrote both the subcommand help and the top-level
+  description so they match the code.
+
+### Added
+
+- **`check_cross_module_imports.py` extended with
+  `check_stdlib_usage()`**. Previously it only caught "symbol used
+  in one submodule but defined in another" across the v0.28 G-split
+  groups. Now it also catches "stdlib module attribute used but the
+  module never imported" (e.g. `sys.stderr` used with no
+  `import sys`). STDLIB_ROOTS is an explicit allow-list
+  (`sys`, `os`, `re`, `json`, `pathlib`, `subprocess`, `threading`,
+  `time`, `datetime`, `logging`, `shutil`, `argparse`, `sqlite3`,
+  `struct`) — adding to it is a deliberate act. Running the lint
+  caught two extra copies of the sys-import bug beyond the one the
+  reviewer found.
+
+### Changed
+
+- **Docs sweep for package count and removed flags.** `README.md`,
+  `kb_importer/README.md`, and `CONTRIBUTING.md` had multiple stale
+  references from before the kb_core extraction and the 0.29.1
+  `_archived/` removal: several "4 packages" / "four packages"
+  lines, install blocks that missed `kb_core` (which other packages
+  now pin as a versioned dep), a stray `unarchive` subcommand
+  reference, and a `kb-citations fetch --only-key` / `refresh-counts
+  --only-key` claim (neither subcommand has that flag). All
+  corrected. Install order now documents `kb_core` first — without
+  it on the path, the other four editable installs can't resolve
+  their `kb-core==` pin.
+
+### Verification
+
+- `scripts/check_cross_module_imports.py` (with the new stdlib
+  sweep) clean across all five packages.
+- `scripts/check_package_consistency.py` clean — version bump
+  propagated across 10 `__version__` / `version =` sites and 7
+  inter-package pins.
+- Fresh `python -m build --wheel` + `pip install` into a scratch
+  venv: `kb-importer --help`, `kb-citations fetch --help`, and
+  `kb-citations fetch --freshness-days 0` all parse without error.
+
 ## [0.29.3] — 2026-04
 
 Repairs 0.29.2 — which claimed to fix scaffold-template packaging

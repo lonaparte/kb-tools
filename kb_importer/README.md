@@ -337,10 +337,10 @@ alphanumeric) but identify different things:
   is what names `~/Zotero/storage/{attachment_key}/` subdirectories.
 
 A paper can have multiple attachments. Commands like `set-summary`
-and `unarchive` take **paper keys**, never attachment keys. Passing
-an attachment key where a paper key is expected gets a friendly error
-pointing you to the right paper key (as of v0.1.0), but save yourself
-the round-trip: always start from paper keys.
+take **paper keys**, never attachment keys. Passing an attachment
+key where a paper key is expected gets a friendly error pointing
+you to the right paper key (as of v0.1.0), but save yourself the
+round-trip: always start from paper keys.
 
 **How to get paper keys cheaply**: `kb-importer list papers --imported`
 (no `--with-titles`) prints raw paper keys with zero Zotero API calls.

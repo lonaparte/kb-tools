@@ -68,12 +68,31 @@ def find_workspace_config() -> Path | None:
     """Canonical location for kb-citations YAML:
     `<parent>/.ee-kb-tools/config/kb-citations.yaml`. Returns the
     Path if it exists, else None.
+
+    v0.29.4: fall back to CWD-based walk-up when the code-install
+    path (_find_tools_dir) fails. Pip-installed wheels live in
+    site-packages, far from any user workspace — autodetect needs
+    to also ask "is CWD inside a workspace?" to be useful in that
+    scenario. Same pattern + rationale as
+    kb_importer.config._find_workspace_config.
     """
+    from kb_core.workspace import find_workspace_root, TOOLS_DIR_NAME
+
+    # (1) code-install-based.
     tools = _find_tools_dir()
-    if tools is None:
-        return None
-    candidate = tools / "config" / "kb-citations.yaml"
-    return candidate if candidate.exists() else None
+    if tools is not None:
+        candidate = tools / "config" / "kb-citations.yaml"
+        if candidate.exists():
+            return candidate
+
+    # (2) CWD-based walk-up.
+    ws = find_workspace_root()
+    if ws is not None:
+        candidate = ws / TOOLS_DIR_NAME / "config" / "kb-citations.yaml"
+        if candidate.exists():
+            return candidate
+
+    return None
 
 
 def kb_root_from_env(explicit: Path | None = None) -> Path:
@@ -86,10 +105,18 @@ def kb_root_from_env(explicit: Path | None = None) -> Path:
     env = os.environ.get("KB_ROOT")
     if env:
         return Path(env).expanduser().resolve()
-    # Workspace autodetect.
+    # Workspace autodetect. 0.29.4: same two-step pattern as
+    # find_workspace_config — code-install first, CWD-based
+    # fallback for pip-wheel installs.
+    from kb_core.workspace import find_workspace_root
     tools = _find_tools_dir()
     if tools is not None:
         candidate = tools.parent / "ee-kb"
+        if candidate.exists():
+            return candidate.resolve()
+    ws = find_workspace_root()
+    if ws is not None:
+        candidate = ws / "ee-kb"
         if candidate.exists():
             return candidate.resolve()
     raise ValueError(

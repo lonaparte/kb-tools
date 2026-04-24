@@ -40,6 +40,29 @@ def _positive_int(value: str) -> int:
     return n
 
 
+def _nonnegative_int(value: str) -> int:
+    """argparse `type=` helper: accept zero and positive ints.
+
+    0.29.4: used by --freshness-days, which documents 0 as
+    "force refetch" (the semantic is "skip if cache is newer
+    than N days" → N=0 means "never skip"). _positive_int
+    rejected it; they mismatched. Keep _positive_int for
+    --max-refs, --max-cites, --max-api-calls where 0 is
+    legitimately meaningless.
+    """
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(
+            f"must be an integer, got {value!r}"
+        )
+    if n < 0:
+        raise argparse.ArgumentTypeError(
+            f"must be >= 0, got {n}"
+        )
+    return n
+
+
 def _parser() -> argparse.ArgumentParser:
     from . import __version__
     p = argparse.ArgumentParser(
@@ -75,7 +98,7 @@ def _parser() -> argparse.ArgumentParser:
                    help="Max references per paper (default 1000).")
     f.add_argument("--max-cites", type=_positive_int, default=200,
                    help="Max incoming citations per paper (default 200).")
-    f.add_argument("--freshness-days", type=_positive_int, default=30,
+    f.add_argument("--freshness-days", type=_nonnegative_int, default=30,
                    help="Skip papers whose cache is newer than this "
                         "(default 30). Pass 0 to force refetch.")
     f.add_argument("--with-citations", action="store_true",

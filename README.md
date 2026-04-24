@@ -1,6 +1,6 @@
 # ee-kb-tools
 
-Four Python packages that implement the `ee-kb` personal
+Five Python packages that implement the `ee-kb` personal
 knowledge-base system. They communicate through the shared markdown
 format on disk and (optionally) the SQLite projection inside the KB.
 
@@ -38,11 +38,15 @@ Zotero metadata ───────┤
                                             └────────────────────────┘
 ```
 
-## Contents (4 packages)
+## Contents (5 packages)
 
-- [`kb_importer/`](kb_importer/) — reads Zotero (live local API or
-  web API) and writes KB markdown files. Run manually after adding
-  papers.
+- [`kb_core/`](kb_core/) — shared utilities (workspace autodetect,
+  events log, thoughts writer). Other packages import from this; it
+  is not a user-facing CLI.
+
+- [`kb_importer/`](kb_importer/) — reads Zotero (web API by default
+  or local live API) and writes KB markdown files. Run manually after
+  adding papers.
 
 - [`kb_mcp/`](kb_mcp/) — indexer + MCP server that exposes the KB
   to AI clients. FTS5 + vector search + link graph over the md files.
@@ -58,7 +62,7 @@ Zotero metadata ───────┤
   edges from Semantic Scholar or OpenAlex and writes them into
   kb-mcp's link graph + updates per-paper citation counts.
 
-The four packages share the markdown format contract and
+The five packages share the markdown format contract and
 (optionally) the SQLite schema. What "independent" means here, more
 precisely:
 
@@ -129,7 +133,7 @@ Changes from v25:
 
 **kb-importer**: full import flow, metadata + fulltext.
   - `status`, `list`, `import papers`, `import notes`, `sync`,
-    `check-orphans`, `unarchive`, `show-template`, `import-summaries`,
+    `check-orphans`, `show-template`, `import-summaries`,
     `set-summary`.
   - Two Zotero source modes: `live` (local API, Zotero running) and
     `web` (api.zotero.org). Both produce identical md output.
@@ -226,18 +230,22 @@ scaffold / create / update / delete / prefs / graph / lint / re-read.
     experimentation.
 
 **kb-citations**: 7 subcommands, paper-to-paper graph + counts.
-  - `fetch [--only-key]` — pull references (and, optionally,
-    citations) from Semantic Scholar or OpenAlex into a local cache.
+  - `fetch` — pull references (and, optionally, citations) from
+    Semantic Scholar or OpenAlex into a local cache.
+    `--freshness-days N` skips papers whose cache is newer than N
+    days (0 forces refetch); `--with-citations` doubles API cost
+    to also fetch incoming citers.
   - `link` — resolve cached DOIs to local paper keys and write
     `origin='citation'` edges into kb-mcp's `links` table. v26:
     `@cite`-style edges resolve to the whole-work paper (never a
     chapter), so a book's citation count doesn't get divided
     between its chapter rows.
-  - `refresh-counts [--only-key]` — bulk-update
-    `papers.citation_count` + source + timestamp from the provider's
-    paper-meta endpoint. Cheaper than `fetch` — one call per paper,
-    no reference-list walk. v26: only the whole-work row gets
-    updated (chapter rows leave `citation_count` NULL).
+  - `refresh-counts` — bulk-update `papers.citation_count` + source
+    + timestamp from the provider's paper-meta endpoint. Cheaper
+    than `fetch` — one call per paper, no reference-list walk.
+    `--max-api-calls N` caps total provider calls. v26: only the
+    whole-work row gets updated (chapter rows leave
+    `citation_count` NULL).
   - `refs <key>` / `cites <key>` — print cached references /
     citations for one paper.
   - `status` — cache summary (how many papers fetched, how fresh).
@@ -247,10 +255,10 @@ scaffold / create / update / delete / prefs / graph / lint / re-read.
 
 ## Install
 
-The four packages (`kb_importer`, `kb_mcp`, `kb_write`, `kb_citations`)
-install into a **single venv** inside `.ee-kb-tools/`. This keeps the
-entire toolchain self-contained in the workspace — nothing under
-`~/.venvs/`, `~/.local/`, or any system path.
+The five packages (`kb_core`, `kb_importer`, `kb_mcp`, `kb_write`,
+`kb_citations`) install into a **single venv** inside `.ee-kb-tools/`.
+This keeps the entire toolchain self-contained in the workspace —
+nothing under `~/.venvs/`, `~/.local/`, or any system path.
 
 ```bash
 # From the workspace parent (the directory that contains
@@ -260,9 +268,13 @@ cd .ee-kb-tools
 python -m venv .venv
 source .venv/bin/activate
 
-# Install all four packages editable. The [write,gemini] extras
-# pull kb-write (for write tools via MCP) and google-genai (for the
-# Gemini embedding provider). Omit `gemini` if you only use OpenAI.
+# Install all five packages editable. Order matters: kb-core is
+# the shared dependency and must come first so the others resolve
+# its pinned version from the local checkout. The [write,gemini]
+# extras pull kb-write (for write tools via MCP) and google-genai
+# (for the Gemini embedding provider). Omit `gemini` if you only
+# use OpenAI.
+pip install -e ./kb_core
 pip install -e ./kb_write
 pip install -e "./kb_mcp[write,gemini]"
 pip install -e ./kb_importer
@@ -277,20 +289,20 @@ Python 3.10+ required.
 python scripts/post_install_test.py
 ```
 
-Runs 16 smoke tests covering all four CLIs, workspace
+Runs 16 smoke tests covering all four user-facing CLIs, workspace
 initialization, write operations, indexing, API connectivity, and
 the no-system-path lint. Exit 0 = healthy. API tests for OpenAI /
 Gemini / Semantic Scholar are skipped if their keys aren't set —
 they never block the exit.
 
-### Why one venv, not four
+### Why one venv, not five
 
-The four packages aren't independent: `kb-mcp` soft-imports
+The five packages aren't independent: `kb-mcp` soft-imports
 `kb_write` to expose write tools over MCP, and soft-imports
 `kb_citations` to expose citation trigger tools. Without these on
 the path, those tools silently disappear from the MCP surface.
 Separate venvs would break those links. One venv in
-`.ee-kb-tools/.venv/` keeps the four talking and keeps the
+`.ee-kb-tools/.venv/` keeps the five talking and keeps the
 workspace portable — move the parent directory and everything
 still resolves via the sibling autodetect.
 

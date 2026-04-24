@@ -12,12 +12,15 @@ welcome.
 git clone <repo>
 cd ee-kb-tools
 
-# Install the four packages in a single venv
+# Install the five packages in a single venv. kb_core must come
+# first — the other four pin it as a versioned dependency and won't
+# resolve without the local editable install on the path.
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e kb_importer/
-pip install -e kb_mcp/
+pip install -e kb_core/
 pip install -e kb_write/
+pip install -e kb_mcp/
+pip install -e kb_importer/
 pip install -e kb_citations/
 ```
 

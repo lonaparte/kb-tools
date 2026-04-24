@@ -246,16 +246,84 @@ def check_group(label: str, base: pathlib.Path, sibs: list[str]) -> list[str]:
     return errs
 
 
+# ---------------------------------------------------------------------
+# Single-file check: stdlib-module referenced but not imported.
+#
+# Added in 0.29.4 after a review caught import_fulltext.py using
+# sys.stderr at 19 sites without `import sys` at the top. The
+# cross-module check above didn't help because `sys` isn't defined
+# in any sibling — it's a stdlib miss. This second lint closes that
+# specific class: for each .py in the repo, collect
+# `<name>.<attr>` chains; for every `<name>` in a hardcoded stdlib
+# whitelist, assert `<name>` was imported or locally bound.
+#
+# Whitelist kept small on purpose. The goal is to catch obvious
+# paste-forgot-import bugs during module splits; a fully general
+# "undefined name" check is what pyflakes/ruff do and we don't want
+# to re-implement those. This hits the ~10 stdlib names that actually
+# showed up as Name-then-Attribute bugs during the 0.28-0.29 splits.
+# ---------------------------------------------------------------------
+
+STDLIB_ROOTS = {
+    "sys", "os", "re", "json", "pathlib", "subprocess",
+    "threading", "time", "datetime", "logging", "shutil",
+    "argparse", "sqlite3", "struct",
+}
+
+
+def check_stdlib_usage(path: pathlib.Path) -> list[str]:
+    """For each stdlib module name referenced as `X.attr` in `path`,
+    confirm X is imported or locally bound. Otherwise the attribute
+    access will raise NameError at runtime."""
+    errs: list[str] = []
+    try:
+        tree = ast.parse(path.read_text())
+    except Exception:
+        return errs
+    imported = _collect_imported(path)
+    bound = _collect_locally_bound(path)
+    # Which stdlib roots does this file actually reference?
+    referenced_roots: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+            if isinstance(node.value.ctx, ast.Load):
+                name = node.value.id
+                if name in STDLIB_ROOTS:
+                    referenced_roots.add(name)
+    for name in sorted(referenced_roots):
+        if name not in imported and name not in bound:
+            errs.append(
+                f"{path}: uses {name}.* but never imports {name!r} "
+                f"(NameError at runtime on any path that evaluates the attribute)"
+            )
+    return errs
+
+
+def check_all_stdlib_usage() -> list[str]:
+    errs: list[str] = []
+    # Walk all src/ trees.
+    for pkg in ("kb_core", "kb_write", "kb_mcp", "kb_importer", "kb_citations"):
+        src = REPO / pkg / "src"
+        if not src.is_dir():
+            continue
+        for p in src.rglob("*.py"):
+            if "__pycache__" in p.parts:
+                continue
+            errs.extend(check_stdlib_usage(p))
+    return errs
+
+
 def main() -> int:
     errors: list[str] = []
     for label, base, sibs in SPLIT_GROUPS:
         errors.extend(check_group(label, base, sibs))
+    errors.extend(check_all_stdlib_usage())
     if errors:
         print("✗ cross-module-imports check FAILED:", file=sys.stderr)
         for e in errors:
             print(f"  - {e}", file=sys.stderr)
         return 1
-    print("✓ cross-module-imports OK (4 split groups scanned, no missing imports)")
+    print("✓ cross-module-imports OK (4 split groups + stdlib-usage scanned, no missing imports)")
     return 0
 
 
