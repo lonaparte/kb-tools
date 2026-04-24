@@ -188,11 +188,32 @@ If step 1 found `ee-kb/` missing or empty, scaffold it now:
 ```bash
 cd "$WORKSPACE_PARENT"
 mkdir -p ee-kb
-kb-write init --kb-root "$WORKSPACE_PARENT/ee-kb"
+kb-write --kb-root "$WORKSPACE_PARENT/ee-kb" init
 ```
 
-This creates the `papers/`, `topics/`, `thoughts/`, `.kb-mcp/`,
-and `.agent-prefs/` subdirs plus the AGENT-WRITE-RULES.md file.
+(`--kb-root` is a top-level kb-write flag, not a flag on the
+`init` subcommand. Alternative: `cd ee-kb && kb-write init` —
+autodetect then resolves kb_root from CWD.)
+
+This creates these subdirs inside `ee-kb/`:
+
+- `papers/` — one md per paper
+- `topics/standalone-note/` — Zotero standalone notes
+- `topics/agent-created/` — topic mds created by AI agents
+- `thoughts/` — dated thought mds
+- `.agent-prefs/` — agent preference files
+
+Plus these files at the KB root: `README.md`, `CLAUDE.md`,
+`AGENTS.md`, `AGENT-WRITE-RULES.md`, `.cursorrules`, `.aiderrc`,
+`.claude/settings.json`, `.gitignore`, and `.agent-prefs/README.md`.
+
+0.29.8+: if `ee-kb/` uses the canonical name, `kb-write init` also
+auto-creates `.ee-kb-tools/config/` next to it with the four
+scaffold YAMLs (`kb-mcp.yaml`, `kb-importer.yaml`,
+`kb-citations.yaml`, `README.md`).
+
+The `.kb-mcp/` directory (projection DB + event log + audit log)
+is NOT created by `init`. It appears on first `kb-mcp index`.
 
 ### 7. Run the post-install sanity check
 
@@ -223,14 +244,25 @@ Template configs live in `.ee-kb-tools/config/`; copy and edit.
 
 ### 9. Run the first import (optional but recommended)
 
+Pick any five pending-import paper keys to validate the pipeline
+before a full-library run. Fastest way: let `list` show you the
+pending set, grab five keys, and pass them explicitly:
+
 ```bash
-cd "$WORKSPACE_PARENT"
-kb-importer import papers --limit 5 --dry-run
+cd "$WORKSPACE_PARENT/ee-kb"
+kb-importer list papers --pending --limit 5
+# (copy five keys from the output)
+
+kb-importer --dry-run import papers KEY1 KEY2 KEY3 KEY4 KEY5
+# If that prints five md files it would write, drop --dry-run:
+kb-importer import papers KEY1 KEY2 KEY3 KEY4 KEY5
 ```
 
-If that prints 5 candidate papers, run without `--dry-run` to
-actually import. Don't do a full-library import on the first try
-— validate on 5 first.
+Alternative if you'd rather filter by Zotero metadata:
+`kb-importer --dry-run import papers --year 2024 --all-pending`
+runs the same five-paper dry-run scoped to one year. Don't use
+`--all-pending` without a filter on the first run — it'll try to
+import everything.
 
 ### 10. Delete the source kb-tools/ repo
 

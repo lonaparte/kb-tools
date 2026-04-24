@@ -2,8 +2,8 @@
 
 CLI that translates a Zotero library into a KB repository of markdown
 files. One paper per md, with metadata, abstract, and Zotero notes.
-Child notes are embedded in the paper's md; standalone notes get their
-own md in `zotero-notes/`.
+Child notes are embedded in the paper's md; standalone notes get
+their own md in `topics/standalone-note/`.
 
 This is the Zotero-side tool. It has no knowledge of RAG, vectors, or
 MCP. Those live in the `kb-mcp` project and consume the md files this
@@ -15,16 +15,19 @@ kb-importer reads Zotero metadata in one of two modes:
 
 | mode | metadata source | PDFs | Zotero running? | network? |
 |------|----------------|------|-----------------|---------|
-| `live` (default) | localhost:23119 local API | local `zotero_storage_dir` | yes | no |
-| `web` | api.zotero.org (cloud) | local `zotero_storage_dir` | no | yes |
+| `web` (default since 0.28.0) | api.zotero.org (cloud) | local `zotero_storage_dir` | no | yes |
+| `live` | localhost:23119 local API | local `zotero_storage_dir` | yes | no |
 
 Both modes use the **same local storage directory** for PDFs, because
 Zotero item keys are the same across all APIs. So:
 
-- **Running on your main machine with Zotero open** → use `live`.
-- **Running on a server without Zotero** → use `web`; rsync
-  `~/Zotero/storage/` from your main machine to the server once, and
-  point `zotero_storage_dir` at the copy.
+- **Running on a server without Zotero** (or anywhere headless) →
+  `web` (the default). Works via the cloud API; rsync
+  `~/Zotero/storage/` to the machine once so PDFs are available
+  locally.
+- **Running on your main machine with Zotero open** → you can
+  pick either. `live` avoids the API key + network. `web` still
+  works.
 
 > **TODO**: a future "sqlite" mode could read `zotero.sqlite` directly
 > for a fully offline snapshot. Deferred — the Zotero SQLite schema is
@@ -37,35 +40,34 @@ cd kb_importer
 pip install -e .
 ```
 
-Requires Python 3.10+.
+Requires Python 3.10+. Pins `kb-core==<same-version>` and
+`kb-write==<same-version>` — install those first if you're coming
+from a fresh venv (see repo-root DEVELOPMENT.md / DEPLOYMENT.md).
 
 ## Setup
 
-### Option A: live mode (recommended for your main machine)
+**Config storage policy.** All kb-importer config lives at
+`<workspace-parent>/.ee-kb-tools/config/kb-importer.yaml`. Nothing
+is read from `~/.config/`, `~/.local/share/`, `/etc/`, or any other
+system path. API keys come from env variables only — never stored
+in config files.
 
-1. **Start Zotero** and enable the local API:
-   Settings → Advanced → "Allow other applications on this computer
-   to communicate with Zotero".
+### Canonical workspace layout
 
-2. **Create a KB repo**:
+```
+<workspace-parent>/
+├── .ee-kb-tools/
+│   └── config/
+│       └── kb-importer.yaml    (created by `kb-write init`)
+├── ee-kb/                      (your KB — paper mds, notes, topics, thoughts)
+└── zotero/
+    └── storage/                (Zotero attachment store — rsynced for web mode)
+```
 
-   ```bash
-   mkdir -p ee-kb/{papers,zotero-notes,topics,thoughts}
-   cd ee-kb && git init
-   ```
+`kb-write init` run from inside `ee-kb/` scaffolds this layout
+(0.29.8+: auto-creates `.ee-kb-tools/config/` too).
 
-3. **Configure** `~/.config/kb-importer/config.yaml`:
-
-   ```yaml
-   zotero_storage_dir: ~/Zotero/storage
-   kb_root: /path/to/ee-kb
-   # zotero.source_mode defaults to "live", nothing else needed.
-   logging:
-     level: info
-     file: ~/.local/state/kb-importer/log.jsonl
-   ```
-
-### Option B: web mode (for servers or multi-machine setups)
+### Option A: web mode (default, recommended)
 
 1. **Get your Zotero userID and API key**:
    - Go to <https://www.zotero.org/settings/keys>
@@ -73,28 +75,26 @@ Requires Python 3.10+.
    - Click "Create new private key", give it a name, set **read-only**
      access to your library, save the generated key (long hex string).
 
-2. **Rsync storage from your main machine to the server** (one-time,
-   repeat whenever you add new PDFs to Zotero):
+2. **Rsync storage from a machine with Zotero to this machine**
+   (one-time; repeat whenever you add new PDFs):
 
    ```bash
-   # On main machine:
-   rsync -av --delete ~/Zotero/storage/ user@server:/path/on/server/zotero-storage/
+   # On the Zotero machine:
+   rsync -av --delete ~/Zotero/storage/ user@target:/path/to/workspace/zotero/storage/
    ```
 
-3. **Configure on the server** — `~/.config/kb-importer/config.yaml`:
+3. **Edit** `<workspace-parent>/.ee-kb-tools/config/kb-importer.yaml`
+   (the file exists after `kb-write init`; fill in your library_id):
 
    ```yaml
-   zotero_storage_dir: /path/on/server/zotero-storage
-   kb_root: /path/to/ee-kb
-
    zotero:
-     source_mode: web
-     library_id: "YOUR_USER_ID"          # your userID as a string
-     library_type: user              # "user" for personal libraries
-     api_key_env: ZOTERO_API_KEY     # name of env var holding the key
+     library_id: "YOUR_USER_ID"    # as a string; e.g. "1234567"
+     library_type: user            # "user" or "group"
+     source_mode: web              # (the default as of 0.28.0)
+     api_key_env: ZOTERO_API_KEY   # env var name; value set in your shell rc
    ```
 
-4. **Export the API key** in the shell that runs kb-importer:
+4. **Export the API key** in your shell rc (`~/.bashrc` / `~/.zshrc`):
 
    ```bash
    export ZOTERO_API_KEY=<your-api-key>
@@ -102,6 +102,27 @@ Requires Python 3.10+.
 
    Or put it in a file that's sourced by your shell / systemd unit /
    cron job. Never commit the key itself to git.
+
+### Option B: live mode
+
+1. **Start Zotero** and enable the local API:
+   Settings → Advanced → "Allow other applications on this computer
+   to communicate with Zotero".
+
+2. **Set `source_mode: live`** in `kb-importer.yaml`:
+
+   ```yaml
+   zotero:
+     source_mode: live
+   ```
+
+   No `library_id` or API key needed in live mode — Zotero's local
+   API authenticates by virtue of running on the same machine.
+
+3. The rest is the same. `zotero_storage_dir` defaults to
+   `<workspace-parent>/zotero/storage/` if that directory exists
+   (canonical layout); otherwise set it explicitly via
+   `KB_ZOTERO_STORAGE` or `--zotero-storage`.
 
 ### CLI overrides (for either mode)
 
@@ -307,9 +328,11 @@ preserves:
 
 - Every frontmatter field starting with `kb_`.
 - Content between `<!-- kb-ai-zone-start -->` and `<!-- kb-ai-zone-end -->`.
-- Content between `<!-- kb-fulltext-start -->` and `<!-- kb-fulltext-end -->`
-  (in the default metadata mode; `--fulltext` mode would overwrite it,
-  but that mode isn't in this Phase 1 MVP).
+- Content between `<!-- kb-fulltext-start -->` and
+  `<!-- kb-fulltext-end -->` (the AI summary section). v22+ splices
+  updates in-place via the `inject_fulltext` surgical rewriter rather
+  than regenerating the whole file, so the AI-summary region is safe
+  across both metadata re-imports and `--force-fulltext` reruns.
 
 Everything else (`zotero_*` fields, core fields, Zotero notes section,
 attachments section, body) is regenerated from Zotero.

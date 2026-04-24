@@ -84,7 +84,13 @@ python3 scripts/check_no_secrets.py
 python3 scripts/test_e2e.py
 
 # 5. Byte-compile sanity
-python3 -m compileall -q kb_importer/src kb_mcp/src kb_write/src kb_citations/src
+python3 -m compileall -q kb_core/src kb_write/src kb_mcp/src kb_importer/src kb_citations/src
+
+# 6. Unit tests (stdlib runner; ~4s)
+python3 scripts/run_unit_tests.py
+
+# 7. Cross-module + stdlib-usage imports lint
+python3 scripts/check_cross_module_imports.py
 ```
 
 ## Style
@@ -100,7 +106,7 @@ python3 -m compileall -q kb_importer/src kb_mcp/src kb_write/src kb_citations/sr
 - **Line length**: soft cap at 80. Hard cap at 100 (prefer to break
   rather than run long).
 - **No new third-party runtime deps** without discussion; they make
-  the 4-pkg independent-install design harder to maintain.
+  the 5-pkg independent-install design harder to maintain.
 
 ## Commit / PR
 

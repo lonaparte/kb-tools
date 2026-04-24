@@ -42,12 +42,19 @@ development:
 pip install -e kb_core/
 ```
 
-`kb_write`, `kb_mcp`, `kb_importer`, and `kb_citations` all depend
-on `kb-core>=0.1`.
+`kb_write`, `kb_mcp`, `kb_importer`, and `kb_citations` each pin
+`kb-core==<same-version>` as a hard dep — the five packages are
+released as a coordinated bundle, not independently. Always install
+kb_core first in a fresh venv so the other pins resolve from the
+local checkout.
 
 ## Versioning
 
-Semver inside v27: additions bump MINOR, breaking changes bump
-MAJOR. Since every other package pins kb-core, a MAJOR bump means
-coordinated update across the bundle — treat it as you would a
-schema version bump.
+Every bundle release advances kb_core together with the other four
+packages. `scripts/check_package_consistency.py` enforces that all
+five `__version__` strings and inter-package `==` pins agree before
+a release zip is built.
+
+Because the other packages pin kb-core exactly, any kb-core change
+is effectively a coordinated bundle bump — treat it with the same
+care as a schema version bump.

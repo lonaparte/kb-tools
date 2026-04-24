@@ -33,8 +33,8 @@ table.
 ```bash
 cd kb_citations
 pip install -e .
-# Or with the [link] extra to ensure kb_mcp is available:
-pip install -e "./kb_citations[link]"
+# Or from the repo root with the [link] extra (pulls in kb_mcp):
+pip install -e "kb_citations[link]"
 ```
 
 Deps: `httpx`, `python-frontmatter`, `PyYAML`. kb_mcp is optional
@@ -72,9 +72,8 @@ kb-citations cites ABCD1234                 # who cites ABCD1234 (cached;
 #    Cheaper than `fetch`: one provider call per paper, no reference walk.
 #    Writes papers.citation_count + source + timestamp in the kb-mcp DB.
 #    Citation counts grow over time; monthly cron is a reasonable cadence.
-kb-citations refresh-counts
-kb-citations refresh-counts --only-key ABCD1234,EFGH5678   # subset
-kb-citations refresh-counts --max-api-calls 200            # cap
+kb-citations refresh-counts                                 # whole KB
+kb-citations refresh-counts --max-api-calls 200             # cap per run
 
 # 6) Find high-value dangling DOIs — papers multiple local papers cite
 #    but that aren't yet in your Zotero library. Purely local (reads cache).
