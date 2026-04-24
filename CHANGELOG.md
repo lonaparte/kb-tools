@@ -5,6 +5,65 @@ All notable changes to ee-kb-tools.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is our own (calendar-ish, per-major-iteration).
 
+## [1.0.0] — 2026-04-24
+
+**First stable release.** The 0.29.x series (0.29.0 → 0.29.8)
+hardened the pip-wheel install path, the workspace autodetect,
+error-path robustness, and doc accuracy. Audit sweeps in 0.29.3
+through 0.29.8 caught and fixed a steady stream of small
+silent-failure bugs; 1.0.0 is the point where the toolchain passes
+every audit we currently have, on every install shape we currently
+test.
+
+No new features beyond 0.29.8. This bump exists purely to mark
+"we're confident enough in the surface area and implementation
+details to stop calling this a pre-release".
+
+### What 1.0.0 promises
+
+- **CLI surface stability within 1.x.** Subcommand names, flag
+  names, and their argparse contracts won't change without a major
+  bump. Adding new flags / subcommands is a minor bump; removing or
+  renaming is major.
+- **Config-file schema stability within 1.x.** Scaffold templates
+  may add new optional keys in minor bumps. Renames carry a
+  DeprecationWarning for at least one minor cycle.
+- **Projection DB schema changes follow
+  `kb_core.schema.SCHEMA_VERSION`.** A schema bump can happen in
+  any minor release; the migration is always drop-and-rebuild on
+  the next `ensure_schema()`. CHANGELOG will call it out
+  explicitly.
+- **Cross-package pin**: every release bumps all five packages
+  together and pins `kb-*==<same-version>`. A `pip install -e` of
+  one package against a different-version install of another
+  refuses to resolve.
+
+### Not promised
+
+- Python API stability of internal modules (anything not in the
+  package's `__init__.py` `__all__` list). They can reshuffle in
+  any release.
+- MCP tool argument schemas beyond what's stable enough to document
+  in the exposed JSON schema. Adding optional args = minor; renaming
+  an existing one = major.
+- Performance numbers. "fast enough for 1200 papers on an SSD" is
+  the ambient standard; we'll fix regressions but won't benchmark.
+
+### Verification before release
+
+- Four lints (`check_package_consistency`, `check_no_secrets`,
+  `check_no_system_paths`, `check_cross_module_imports` with
+  stdlib-usage sweep): clean.
+- Unit tests: 404 / 404.
+- E2E: 46 / 46 including MCP tool-count=36 assertion.
+- post_install_test.py on fresh pip-wheel install: 14 pass, 1 skip
+  (no OpenAI key), 1 unrelated external API flake.
+- Fresh-venv acceptance test: scratch venv outside workspace +
+  scratch workspace + `kb-write init` + `kb-importer status` +
+  `kb-mcp index` + `kb-mcp snapshot export/import` round-trip +
+  unicode body + mtime guard + malformed YAML + non-git kb_root
+  + no-embedding-key graceful degradation — all behaved correctly.
+
 ## [0.29.8] — 2026-04-24
 
 Fresh-venv acceptance test caught two silent-failure bugs: init
