@@ -6,7 +6,7 @@ packages.
 """
 from __future__ import annotations
 
-__version__ = "1.4.4"
+__version__ = "1.4.5"
 
 # Re-exports so downstream can write `from kb_core import safe_resolve`.
 from .paths import (

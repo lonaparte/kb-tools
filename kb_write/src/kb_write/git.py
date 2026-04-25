@@ -224,25 +224,21 @@ def commit_staged(
     *,
     message_body: str | None = None,
     enabled: bool = True,
-    files: Sequence[str] | None = None,
+    files: Sequence[str],
     run_hooks: bool = False,
 ) -> str | None:
-    """Commit staged changes in the index.
+    """Commit staged changes scoped to `files`.
 
     Use this after operations that stage their own changes — the main
     case is `git rm` for delete, which both removes the file and
     stages the removal. Calling `auto_commit` on the already-deleted
     path fails because `git add <nonexistent>` errors.
 
-    1.4.2 hardening: callers SHOULD pass `files=[<pathspec>]` so the
-    commit is scoped to exactly those paths. Without it,
-    `_commit_if_staged` falls through to "commit whatever's staged",
-    which would include any unrelated staged changes the user (or a
-    sibling process) made in the same repo. The `delete` op was the
-    motivating call site — pre-1.4.2 a delete could silently sweep
-    in user-staged changes alongside the file removal. The fallback
-    (None → all-staged) is retained for legacy callers; new ops
-    must pass pathspec.
+    `files` is required (1.4.4) so the commit is always scoped to a
+    pathspec. Without it, `git commit` would sweep up any other
+    staged changes in the repo (user-staged work, sibling-process
+    stages) — see the 1.4.2 release note for the field-report behind
+    this. There are no legacy "commit whole index" callers.
 
     Returns SHA, or None if repo is clean / not a repo / disabled.
     """
@@ -264,28 +260,21 @@ def _commit_if_staged(
     op: str,
     target: str,
     message_body: str | None,
-    files: Sequence[str] | None = None,
+    files: Sequence[str],
     run_hooks: bool = False,
 ) -> str | None:
-    """Shared tail: check `git diff --cached --quiet`, commit if
-    non-clean, return SHA.
-
-    If `files` is provided, both the staged-check and the commit
-    are scoped to that pathspec — so concurrent auto_commits on
-    disjoint files don't accidentally sweep each other's staged
-    changes into one commit. `commit_staged()` (used by delete)
-    passes None to keep the historical "commit whatever's staged"
-    behaviour.
+    """Shared tail: scope `git diff --cached --quiet` + `git commit`
+    to `files`, return SHA. `files` must be non-empty — both
+    `auto_commit` and `commit_staged` enforce that upstream so the
+    pathspec scope is always present.
     """
-    # Check whether anything is actually staged in this process's
-    # pathspec. Uses the retry wrapper — `git diff --cached`
-    # doesn't itself take the index lock but reads the index, and
-    # a mid-commit race can briefly surface transient errors.
+    # Check whether anything is staged in this process's pathspec.
+    # Uses the retry wrapper — `git diff --cached` doesn't itself
+    # take the index lock but reads the index, and a mid-commit race
+    # can briefly surface transient errors.
     diff_argv = _git_argv(
         kb_root, "diff", "--cached", "--quiet", run_hooks=run_hooks,
-    )
-    if files:
-        diff_argv += ["--"] + list(files)
+    ) + ["--"] + list(files)
     r = _run_git_with_retry(diff_argv)
     if r.returncode == 0:
         log.debug("auto_commit: nothing to commit for %s.", target)
@@ -301,9 +290,7 @@ def _commit_if_staged(
 
     commit_argv = _git_argv(
         kb_root, "commit", "-m", full_msg, run_hooks=run_hooks,
-    )
-    if files:
-        commit_argv += ["--"] + list(files)
+    ) + ["--"] + list(files)
     r = _run_git_with_retry(commit_argv)
     if r.returncode != 0:
         # v0.27.5: at very high concurrency, a sibling process can
@@ -326,27 +313,19 @@ def _commit_if_staged(
             return None
         raise GitError(f"git commit failed: {r.stderr.strip() or r.stdout.strip()}")
 
-    # Grab the SHA.
-    #
-    # 1.4.2: when `files` is set, prefer `git log -1 --format=%H --
-    # <pathspec>`. Reasoning: at high concurrency, between our
-    # `git commit -- <files>` and the `rev-parse HEAD` below, a
-    # sibling process could land another commit, leaving HEAD
-    # pointing at the sibling's SHA — and we'd then audit-log a
-    # stranger's commit as ours. Limiting the lookup by pathspec
-    # gives us "the most recent commit that touched this file",
-    # which is OUR commit by definition (we just made it).
-    if files:
-        r = subprocess.run(
-            ["git", "-C", str(kb_root), "log", "-1", "--format=%H",
-             "--"] + list(files),
-            capture_output=True, text=True, check=False,
-        )
-    else:
-        r = subprocess.run(
-            ["git", "-C", str(kb_root), "rev-parse", "HEAD"],
-            capture_output=True, text=True, check=False,
-        )
+    # Grab the SHA via `git log -1 --format=%H -- <pathspec>`.
+    # Reasoning: at high concurrency, between our `git commit --
+    # <files>` and a bare `rev-parse HEAD`, a sibling process could
+    # land another commit, leaving HEAD pointing at the sibling's
+    # SHA — we'd then audit-log a stranger's commit as ours.
+    # Limiting the lookup by pathspec gives us "the most recent
+    # commit that touched this file", which is OUR commit by
+    # definition (we just made it).
+    r = subprocess.run(
+        ["git", "-C", str(kb_root), "log", "-1", "--format=%H",
+         "--"] + list(files),
+        capture_output=True, text=True, check=False,
+    )
     if r.returncode != 0:
         return None
     return r.stdout.strip()

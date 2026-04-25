@@ -5,6 +5,24 @@ All notable changes to ee-kb-tools.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is our own (calendar-ish, per-major-iteration).
 
+## [1.4.5] — 2026-04-25
+
+### Fixed
+- **kb-citations YAML config no longer silently shadowed by CLI defaults.**
+  `--max-refs`, `--max-cites`, `--freshness-days` now default to `None`;
+  `_build_ctx` distinguishes "flag not passed" from explicit values, so
+  YAML keys (`max_refs`, `max_cites`, `freshness_days`, `fetch_citations`)
+  apply when the CLI is silent. `freshness_days: 0` correctly maps to
+  "force refetch" (None downstream) instead of being shadowed by 30.
+- **`--with-citations` now uses `argparse.BooleanOptionalAction`** so
+  `--no-with-citations` can override `fetch_citations: true` from YAML.
+- 6 new precedence tests in `test_citations_yaml_precedence.py`.
+
+### Refactored (slimming, -135 lines net)
+- `commit_staged()` requires `files=` (the legacy `None`/whole-index
+  branch had no production callers; 2 stale tests dropped).
+- `_nullcontext` class replaced with stdlib `contextlib.nullcontext`.
+
 ## [1.4.4] — 2026-04-25
 
 Modest slimming pass — consolidate a handful of duplicated helpers

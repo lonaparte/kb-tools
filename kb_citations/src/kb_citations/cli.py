@@ -58,16 +58,27 @@ def _parser() -> argparse.ArgumentParser:
 
     f = sub.add_parser("fetch", help="Fetch citation data for all "
                                      "papers with a DOI.")
-    f.add_argument("--max-refs", type=_positive_int, default=1000,
-                   help="Max references per paper (default 1000).")
-    f.add_argument("--max-cites", type=_positive_int, default=200,
-                   help="Max incoming citations per paper (default 200).")
-    f.add_argument("--freshness-days", type=_nonnegative_int, default=30,
+    # 1.4.5: defaults are None so an unset CLI flag falls through to
+    # YAML in `_build_ctx`. Pre-1.4.5 the literal default (1000 / 200
+    # / 30 / False) shadowed YAML even when the user had explicitly
+    # configured otherwise. Final fallback values now live solely in
+    # `_build_ctx` so YAML precedence is well-defined.
+    f.add_argument("--max-refs", type=_positive_int, default=None,
+                   help="Max references per paper "
+                        "(default: YAML max_refs, then 1000).")
+    f.add_argument("--max-cites", type=_positive_int, default=None,
+                   help="Max incoming citations per paper "
+                        "(default: YAML max_cites, then 200).")
+    f.add_argument("--freshness-days", type=_nonnegative_int, default=None,
                    help="Skip papers whose cache is newer than this "
-                        "(default 30). Pass 0 to force refetch.")
-    f.add_argument("--with-citations", action="store_true",
+                        "(default: YAML freshness_days, then 30). "
+                        "Pass 0 to force refetch.")
+    f.add_argument("--with-citations", action=argparse.BooleanOptionalAction,
+                   default=None,
                    help="Also fetch who cites each paper (not just "
-                        "what it references). Doubles API cost.")
+                        "what it references); doubles API cost. Pass "
+                        "--no-with-citations to override "
+                        "fetch_citations=true in YAML.")
     f.add_argument("--max-api-calls", type=_positive_int, default=None,
                    help="Hard cap on provider calls this run. Default: "
                         "unlimited (rate-limited only by provider's own "
@@ -180,21 +191,41 @@ def _build_ctx(args) -> CitationsContext:
     if not mailto:
         mailto = os.environ.get("OPENALEX_MAILTO") or yaml_cfg.get("mailto")
 
+    # 1.4.5: each merge below distinguishes "CLI flag not passed"
+    # (None) from "explicitly set" (any int / bool, including 0 /
+    # False). Pre-1.4.5 the argparse defaults shadowed YAML for
+    # max_refs/max_cites/freshness_days, and `--with-citations` was
+    # store_true so users couldn't disable a YAML-enabled
+    # fetch_citations from the CLI.
+    arg_max_refs = getattr(args, "max_refs", None)
+    arg_max_cites = getattr(args, "max_cites", None)
+    arg_freshness = getattr(args, "freshness_days", None)
+    arg_with_cit = getattr(args, "with_citations", None)
+
+    raw_freshness = (
+        arg_freshness if arg_freshness is not None
+        else _from_yaml("freshness_days", 30)
+    )
     return CitationsContext(
         kb_root=kb_root,
         provider=args.provider or _from_yaml("provider", "semantic_scholar"),
         api_key=api_key,
         mailto=mailto,
-        max_refs=getattr(args, "max_refs", None) or _from_yaml("max_refs", 1000),
-        max_cites=getattr(args, "max_cites", None) or _from_yaml("max_cites", 200),
-        freshness_days=(
-            None if getattr(args, "freshness_days", None) == 0
-            else getattr(args, "freshness_days", None)
-                 or _from_yaml("freshness_days", 30)
+        max_refs=(
+            arg_max_refs if arg_max_refs is not None
+            else _from_yaml("max_refs", 1000)
         ),
+        max_cites=(
+            arg_max_cites if arg_max_cites is not None
+            else _from_yaml("max_cites", 200)
+        ),
+        # freshness_days=0 means "force refetch" (the cache is never
+        # newer than 0 days old). Translate to None so the cache check
+        # is fully bypassed downstream.
+        freshness_days=None if raw_freshness == 0 else raw_freshness,
         fetch_citations=(
-            getattr(args, "with_citations", False)
-            or _from_yaml("fetch_citations", False)
+            arg_with_cit if arg_with_cit is not None
+            else bool(_from_yaml("fetch_citations", False))
         ),
     )
 

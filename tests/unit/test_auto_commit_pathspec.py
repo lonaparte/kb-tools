@@ -203,36 +203,8 @@ def test_commit_non_race_failure_still_raises(monkeypatch, tmp_path):
     assert "pre-commit hook" in str(exc_info.value)
 
 
-def test_commit_staged_keeps_whole_index_behaviour(monkeypatch, tmp_path):
-    """`commit_staged()` (used by delete — `git rm` already staged
-    the removal) must continue to commit the whole index without
-    a pathspec, since the caller didn't pass a file list."""
-    from kb_write import git as kw_git
-
-    monkeypatch.setattr(kw_git, "is_git_repo", lambda _p: True)
-
-    captured: list[list[str]] = []
-
-    def fake_run(argv, capture_output, text, check):
-        captured.append(list(argv))
-        if "diff" in argv:
-            return _make_result(1)  # something staged
-        if "rev-parse" in argv:
-            return _make_result(0, stdout="deadbee\n")
-        return _make_result(0)
-
-    monkeypatch.setattr(subprocess, "run", fake_run)
-
-    sha = kw_git.commit_staged(
-        tmp_path, op="delete_thought", target="thoughts/gone",
-    )
-    assert sha == "deadbee"
-
-    # commit call must NOT have a `--` pathspec when commit_staged
-    # is the entry point — that's how delete stays correct.
-    commit_calls = [a for a in captured if "commit" in a and "diff" not in a]
-    assert commit_calls
-    for argv in commit_calls:
-        assert "--" not in argv, (
-            f"commit_staged unexpectedly passed a pathspec: {argv}"
-        )
+# 1.4.4: dropped `test_commit_staged_keeps_whole_index_behaviour` —
+# the test pinned a contract (`commit_staged()` accepts no pathspec
+# and commits the whole index) that 1.4.2 deprecated and 1.4.4 has
+# removed. Delete now always passes a pathspec, so this branch was
+# unreachable.

@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import logging
 import re
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -333,7 +334,7 @@ def _apply_append_mode(
         )
 
     mtime_before = md_path.stat().st_mtime
-    with write_lock(ctx.kb_root) if ctx.lock else _nullcontext():
+    with write_lock(ctx.kb_root) if ctx.lock else nullcontext():
         atomic_write(md_path, new_text, expected_mtime=mtime_before)
         mtime_after = md_path.stat().st_mtime
 
@@ -395,7 +396,7 @@ def _apply_replace_mode(
         )
 
     mtime_before = md_path.stat().st_mtime
-    with write_lock(ctx.kb_root) if ctx.lock else _nullcontext():
+    with write_lock(ctx.kb_root) if ctx.lock else nullcontext():
         atomic_write(md_path, new_text, expected_mtime=mtime_before)
         mtime_after = md_path.stat().st_mtime
 
@@ -470,7 +471,7 @@ def _apply_merge_mode(
         )
 
     mtime_before = md_path.stat().st_mtime
-    with write_lock(ctx.kb_root) if ctx.lock else _nullcontext():
+    with write_lock(ctx.kb_root) if ctx.lock else nullcontext():
         atomic_write(md_path, new_text, expected_mtime=mtime_before)
         mtime_after = md_path.stat().st_mtime
 
@@ -500,10 +501,6 @@ def _apply_merge_mode(
 # ---------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------
-
-class _nullcontext:
-    def __enter__(self): return self
-    def __exit__(self, *a): return False
 
 
 def _record_re_summarize_success(

@@ -210,45 +210,10 @@ def test_commit_staged_scopes_to_pathspec(monkeypatch, tmp_path):
     )
 
 
-def test_commit_staged_no_files_uses_full_index(monkeypatch, tmp_path):
-    """Legacy callers (none in current code, but the API permits it)
-    can still pass files=None to get the historical 'commit whole
-    index' behaviour. New code should NOT do this for delete; this
-    test just pins the legacy contract so we don't accidentally
-    refactor it away."""
-    from kb_write import git as kw_git
-
-    monkeypatch.setattr(kw_git, "is_git_repo", lambda _p: True)
-
-    captured = []
-
-    def fake_run(argv, **_kw):
-        captured.append(list(argv))
-        if "diff" in argv:
-            return SimpleNamespace(returncode=1, stderr="", stdout="")
-        if "rev-parse" in argv or ("log" in argv and "--format=%H" in argv):
-            return SimpleNamespace(returncode=0, stdout="abc1234\n", stderr="")
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
-
-    monkeypatch.setattr(subprocess, "run", fake_run)
-    sha = kw_git.commit_staged(
-        tmp_path, op="legacy_op", target="something",
-        files=None,
-    )
-    assert sha == "abc1234"
-    # No pathspec separator in diff/commit calls.
-    diff_or_commit_calls = [
-        a for a in captured
-        if any(sub in a for sub in ("diff", "commit"))
-        and "log" not in a
-    ]
-    for argv in diff_or_commit_calls:
-        # `--` may or may not appear; the assertion is that no
-        # specific file follows it.
-        if "--" in argv:
-            idx = argv.index("--")
-            # Tail after `--` is empty: no pathspec was attached.
-            assert argv[idx + 1:] == [], f"unexpected pathspec in {argv}"
+# 1.4.4: dropped `test_commit_staged_no_files_uses_full_index` (the
+# legacy `files=None` branch is gone — `commit_staged()` now requires
+# a pathspec, since delete is the only caller and always provides one.
+# Pinning a contract that no production code uses was hold-back).
 
 
 # ----------------------------------------------------------------------
