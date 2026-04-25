@@ -5,6 +5,82 @@ All notable changes to ee-kb-tools.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is our own (calendar-ish, per-major-iteration).
 
+## [1.4.1] — 2026-04-25
+
+CI + quality infrastructure. Reviewer flagged that 1.4.0's release
+gate is 100% manual: `pre_release_full_check.sh` is comprehensive
+but it depends on a maintainer running it. Also flagged: stdlib
+test-runner shim might drift from real pytest, provider mock
+coverage is concentrated on happy-path-adjacent failure modes,
+and README occasionally lags CHANGELOG.
+
+All four addressed here. No behavior changes — runtime is identical
+to 1.4.0 for any user-visible code path.
+
+### Added
+
+- **`.github/workflows/ci.yml`.** Runs on push to main + on every
+  pull request. Matrix Python 3.10 + 3.13. Steps mirror
+  `pre_release_full_check.sh`'s lint + byte-compile + unit + e2e
+  gates, plus a real-`pytest` step (next item) and the doc-sync
+  gate. Separate `release-zip` job runs after `checks` passes,
+  produces `kb-tools-VERSION.zip` as a 14-day artefact. The
+  release-gate is now permanently visible on GitHub for every
+  commit, not just at release time.
+
+- **Real-pytest CI step.** `pytest tests/unit/ -q` runs alongside
+  the stdlib `scripts/run_unit_tests.py`. Both must pass. Catches
+  shim-vs-pytest drift (we already hit two: `pytest.approx` in
+  1.3.1, `capsys` in 1.4.0). 530/530 tests pass under both.
+
+- **`scripts/check_docs_sync.py`.** Lightweight regex gate:
+    - VERSION must have a matching `## [X.Y.Z]` section in
+      CHANGELOG.md (the most common drift mode).
+    - README.md must mention the current major.minor (forces a
+      surface-area touch on minor bumps without demanding parity
+      on every patch).
+    - If `kb_core.schema.SCHEMA_VERSION` exists, UPGRADING.md
+      must mention `vN` for the current schema number.
+  Wired into both `pre_release_full_check.sh` and
+  `make_release.sh`'s pre-flight, plus the new CI workflow.
+
+- **`tests/unit/test_summarize_edge_cases.py`.** 10 new cases
+  extending provider-mock coverage:
+    - 401 / 403 (auth / forbidden) → SummarizerError, no retry,
+      not BadRequestError.
+    - 200 + non-JSON body → BadRequestError ("non-JSON" message).
+    - 200 + valid JSON missing `choices[0].message.content` →
+      SummarizerError with diagnostic message.
+    - 429 with OpenRouter upstream-wrapped body shape → quota
+      classified, Retry-After honored.
+    - 429 with no header AND no body → quota_type=unknown,
+      retry_after=None (caller's default sleep applies).
+    - Gemini RESOURCE_EXHAUSTED without per_day/per_minute
+      → quota_type=unknown.
+    - DeepSeek 400 "model not supported" → BadRequestError, NOT
+      QuotaExhaustedError.
+    - URLError(socket.timeout) → still hits the retry path.
+    - Gemini 400 "Budget 0 is invalid" (real-world thinking-budget
+      issue) → BadRequestError, no retry.
+
+### Changed
+
+- **README.md** introduces an explicit "Current release: 1.4.x"
+  callout above the doc index, satisfying the new doc-sync gate
+  and giving a single line that future releases can update with a
+  semver edit.
+
+### Verification
+
+- All four lints + new docs-sync gate clean.
+- Byte-compile clean.
+- 530/530 unit tests via stdlib runner; **same 530/530 via real
+  pytest** (114 deprecation warnings, all in third-party libs:
+  python-frontmatter using codecs.open on py3.14, google-genai's
+  _UnionGenericAlias). No drift.
+- 46/46 e2e.
+- `pre_release_full_check.sh` green end-to-end.
+
 ## [1.4.0] — 2026-04-24
 
 Minor release. Closes the three LLM-unavailable robustness items

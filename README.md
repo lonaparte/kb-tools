@@ -4,6 +4,13 @@ Five Python packages that implement the `ee-kb` personal
 knowledge-base system. They communicate through the shared markdown
 format on disk and (optionally) the SQLite projection inside the KB.
 
+**Current release: 1.4.x.** Latest changes in
+[`CHANGELOG.md`](CHANGELOG.md). See the highlights in the per-package
+sections below; cross-cutting features (CWD-based workspace autodetect,
+OpenRouter for both embedding and fulltext, three modes for
+re-summarize / re-read, batch-loop circuit breaker, `kb-importer
+preflight`) accumulated through 1.0–1.4.
+
 > Start with [`DEVELOPMENT.md`](DEVELOPMENT.md) — it covers the
 > install-and-use flow for everyone (contributors, solo users,
 > anyone running the CLI on their own machine).

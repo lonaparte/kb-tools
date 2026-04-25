@@ -33,6 +33,7 @@ python3 scripts/check_package_consistency.py
 python3 scripts/check_no_secrets.py
 python3 scripts/check_no_system_paths.py
 python3 scripts/check_cross_module_imports.py
+python3 scripts/check_docs_sync.py
 echo
 
 # Step 2: byte-compile every src tree. Catches SyntaxError + simple

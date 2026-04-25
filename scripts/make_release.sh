@@ -54,6 +54,10 @@ python3 scripts/check_no_system_paths.py
 # attribute-used-but-module-not-imported (caught the sys import
 # bug in import_fulltext/keys/pipeline).
 python3 scripts/check_cross_module_imports.py
+# 1.4.1: gate on README/CHANGELOG/UPGRADING reflecting current
+# VERSION. Cheap regex-level check; bumping VERSION without
+# updating CHANGELOG is the most common drift mode.
+python3 scripts/check_docs_sync.py
 
 # Stage into a temp dir, filter on rsync.
 STAGE="$(mktemp -d)"
