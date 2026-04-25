@@ -44,10 +44,12 @@ def test_resolve_kb_mcp_prefers_workspace_venv(tmp_path, monkeypatch):
     assert Path(resolved).resolve() == fake_kb_mcp.resolve()
 
 
-def test_resolve_kb_mcp_returns_absolute_path(tmp_path, monkeypatch):
-    """When falling through to PATH, the returned path must be
-    absolute so subprocess.run isn't subject to PATH mutations
-    after resolution."""
+def test_resolve_kb_mcp_path_fallback_default_deny(tmp_path, monkeypatch):
+    """1.4.3: PATH fallback is OFF by default. When workspace venv
+    and current Python bin dir both lack kb-mcp, _resolve_kb_mcp
+    must return None even if `shutil.which` finds one on PATH —
+    PATH is the attack surface we're trying to escape, and "log
+    then exec" would still run the suspicious binary."""
     from kb_write.reindex import _resolve_kb_mcp
 
     kb_root = tmp_path / "ee-kb"
@@ -59,6 +61,35 @@ def test_resolve_kb_mcp_returns_absolute_path(tmp_path, monkeypatch):
 
     import shutil as _shutil
     monkeypatch.setattr(_shutil, "which", lambda name: str(fake))
+    monkeypatch.delenv("KB_WRITE_ALLOW_PATH_KB_MCP", raising=False)
+
+    # Skip if dev-venv shadows the test (Python's bin has kb-mcp).
+    import sys as _sys
+    py_bin = Path(_sys.executable).parent
+    if (py_bin / "kb-mcp").exists() or (py_bin / "kb-mcp.exe").exists():
+        return
+
+    assert _resolve_kb_mcp(kb_root) is None
+
+
+def test_resolve_kb_mcp_path_fallback_opt_in_returns_absolute(
+    tmp_path, monkeypatch,
+):
+    """When the user opts in via KB_WRITE_ALLOW_PATH_KB_MCP=1, the
+    PATH fallback runs and the returned path must be absolute so
+    subprocess.run isn't subject to later PATH mutations."""
+    from kb_write.reindex import _resolve_kb_mcp
+
+    kb_root = tmp_path / "ee-kb"
+    kb_root.mkdir()
+    fake = tmp_path / "system_bin" / "kb-mcp"
+    fake.parent.mkdir()
+    fake.write_text("ok")
+    fake.chmod(0o755)
+
+    import shutil as _shutil
+    monkeypatch.setattr(_shutil, "which", lambda name: str(fake))
+    monkeypatch.setenv("KB_WRITE_ALLOW_PATH_KB_MCP", "1")
 
     resolved = _resolve_kb_mcp(kb_root)
     assert resolved is not None
@@ -72,6 +103,7 @@ def test_resolve_kb_mcp_returns_none_when_absent(tmp_path, monkeypatch):
     kb_root.mkdir()
     import shutil as _shutil
     monkeypatch.setattr(_shutil, "which", lambda name: None)
+    monkeypatch.delenv("KB_WRITE_ALLOW_PATH_KB_MCP", raising=False)
     # Also no python-bin-dir kb-mcp (if dev-venv has it, this test
     # is a no-op pass; real CI has none in setup-python's bin).
     import sys as _sys

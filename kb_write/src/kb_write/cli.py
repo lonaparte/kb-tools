@@ -37,6 +37,7 @@ from .commands import register_all
 from .commands._shared import _build_context
 from .paths import PathError
 from .rules import RuleViolation
+from .safety import _check_unsafe_flags, _UNSAFE_FLAGS_OPT_IN_ENV  # noqa: F401
 from .zones import ZoneError
 
 
@@ -77,6 +78,7 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    _check_unsafe_flags(args)
 
     # Commands that don't need a WriteContext because they don't write
     # or because they build their own narrowly-scoped ctx.

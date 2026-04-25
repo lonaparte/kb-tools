@@ -19,9 +19,13 @@ priority:
   2. The same Python interpreter's bin dir (sys.executable's parent),
      so a `pip install -e ./kb_mcp` into a developer venv keeps
      working without the deployed layout.
-  3. `shutil.which("kb-mcp")` — last resort. We log the resolved
-     ABSOLUTE PATH at INFO level so anyone tailing logs can spot a
-     suspicious resolution before damage compounds.
+  3. `shutil.which("kb-mcp")` — DISABLED by default. PATH is the
+     attack surface we're trying to escape; logging-and-continuing
+     still executes the suspicious binary. Set the env var
+     `KB_WRITE_ALLOW_PATH_KB_MCP=1` to opt back in (e.g. for an
+     unusual installation layout where kb-mcp lives in an OS-wide
+     bin dir). When opted-in, the resolved ABSOLUTE PATH is logged
+     at WARNING level.
 
 The subprocess is then invoked with the ABSOLUTE path, so even if
 PATH is mutated mid-run we use the path we resolved.
@@ -66,17 +70,34 @@ def _resolve_kb_mcp(kb_root: Path) -> str | None:
         if c.is_file() and os.access(c, os.X_OK):
             return str(c)
 
-    # (3) PATH fallback. Log loudly if we land here so a malicious
-    # PATH-shadowed kb-mcp is at least visible in logs.
-    via_path = shutil.which("kb-mcp")
-    if via_path:
-        log.info(
-            "kb-mcp resolved via PATH at %s (not in workspace venv "
-            "or current Python's bin dir). Verify this is the binary "
-            "you expect.",
-            via_path,
-        )
-        return via_path
+    # (3) PATH fallback — default-deny. PATH is precisely the
+    # attack surface we're trying to escape; "log and continue"
+    # would still hand control to the suspicious binary. Only run
+    # PATH resolution when the user has explicitly opted in via
+    # KB_WRITE_ALLOW_PATH_KB_MCP=1.
+    if os.environ.get("KB_WRITE_ALLOW_PATH_KB_MCP") == "1":
+        via_path = shutil.which("kb-mcp")
+        if via_path:
+            # WARNING (not INFO): the user opted into PATH but they
+            # should still see exactly what got resolved.
+            log.warning(
+                "kb-mcp resolved via PATH at %s (KB_WRITE_ALLOW_PATH_KB_MCP=1 "
+                "opt-in). Verify this is the binary you expect.",
+                via_path,
+            )
+            # shutil.which can return a relative path if PATH itself
+            # contains relative entries. We need an absolute path so
+            # subsequent PATH mutations can't redirect the call.
+            return os.path.abspath(via_path)
+    else:
+        # Hint once at the opt-in lever so a confused user doesn't
+        # waste time before realising kb-mcp on PATH is intentionally
+        # ignored. Debug level — too noisy for INFO.
+        if shutil.which("kb-mcp"):
+            log.debug(
+                "kb-mcp present on PATH but ignored by default; set "
+                "KB_WRITE_ALLOW_PATH_KB_MCP=1 to enable PATH fallback."
+            )
 
     return None
 

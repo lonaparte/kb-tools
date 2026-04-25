@@ -18,6 +18,7 @@ from .commands import (
 )
 from .config import ConfigError, load_config
 from .logging_util import setup_logging
+from .safety import _check_unsafe_flags, _UNSAFE_FLAGS_OPT_IN_ENV  # noqa: F401
 
 log = logging.getLogger(__name__)
 
@@ -102,6 +103,8 @@ def main(argv: list[str] | None = None) -> int:
     if not args.command:
         parser.print_help()
         return 1
+
+    _check_unsafe_flags(args)
 
     # Back-compat: if user passed the deprecated --zotero-mirror, route
     # it through as if it came from config (config.load_config handles

@@ -127,10 +127,18 @@ _SMOKE_TEST_PATHS: list[Path] = []
 # ==============================================================
 
 def cli(cmd: list[str], *, env=None, timeout: int = 30) -> subprocess.CompletedProcess:
-    """Run a CLI command with reasonable defaults."""
+    """Run a CLI command with reasonable defaults.
+
+    1.4.3: this smoke-test runner is *explicitly* opted in to
+    unsafe flags — `--no-git-commit` / `--no-reindex` are passed
+    deliberately to keep the test fast and to skip git/reindex
+    setup. Inject the opt-in env var so the new gate in
+    kb-write/kb-importer doesn't reject the smoke test.
+    """
+    base_env = {**os.environ, "KB_WRITE_ALLOW_UNSAFE_FLAGS": "1"}
     return subprocess.run(
         cmd, capture_output=True, text=True, timeout=timeout,
-        env={**os.environ, **(env or {})},
+        env={**base_env, **(env or {})},
     )
 
 

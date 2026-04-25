@@ -43,12 +43,17 @@ import sys
 from pathlib import Path
 
 # Directories to scan (relative to .ee-kb-tools/)
+# 1.4.3: `.github` covers workflow YAMLs (CI uses no secrets today,
+# but we want any future addition caught before push).
 SCAN_DIRS = [
     "kb_importer", "kb_mcp", "kb_write", "kb_citations",
     "scripts",
+    ".github",
 ]
-# Root-level files to scan
-SCAN_ROOT_FILES = ["README.md"]
+# Root-level files to scan. CHANGELOG and UPGRADING accumulate
+# release notes that have repeatedly accreted real paths and emails;
+# include them so secret-scan catches the same drift.
+SCAN_ROOT_FILES = ["README.md", "CHANGELOG.md", "UPGRADING.md"]
 # Extensions considered "source"
 SOURCE_EXTS = {".py", ".md", ".yaml", ".yml", ".toml", ".json", ".txt"}
 # Directories to skip entirely
@@ -151,6 +156,13 @@ CJK_EXEMPT_PATHS = frozenset({
     "kb_importer/src/kb_importer/longform_split.py",
     # SECTION_TITLES_CH constant consumed by re-summarize pipeline
     "kb_importer/src/kb_importer/resummarize_adapter.py",
+    # 1.4.3: release-note documentation files that quote user
+    # feedback verbatim (the user reports issues in Chinese, and
+    # the changelog records the original phrasing for traceability).
+    # Other checks (secrets, home-paths, IPs, personal markers)
+    # still apply.
+    "CHANGELOG.md",
+    "UPGRADING.md",
 })
 
 

@@ -5,6 +5,82 @@ All notable changes to ee-kb-tools.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is our own (calendar-ish, per-major-iteration).
 
+## [1.4.3] — 2026-04-25
+
+Audit-response wave 4: convert four 1.4.2 "warning + continue"
+softenings into hard refusals, and tighten CI supply-chain. Same
+day as 1.4.2 because the audit pointed out — correctly — that
+documentation alone is not a control surface for an agent
+toolchain. The fix shape across all four items: refuse by default,
+opt-in via an env var that a human can read about but an agent
+won't guess.
+
+### Hardened (security)
+
+- **kb-mcp PATH fallback default-deny.** 1.4.2's resolution chain
+  ended at `shutil.which("kb-mcp")` with an INFO-level "verify
+  this is the binary you expect" message and ran it anyway. PATH
+  is precisely the attack surface the wave-1 fix tried to escape;
+  "log and continue" still hands control to the suspicious
+  binary. 1.4.3 only consults PATH if `KB_WRITE_ALLOW_PATH_KB_MCP=1`
+  is in the environment. Without the opt-in, kb-mcp resolution
+  fails closed (skips reindex with a debug-level hint at the
+  opt-in env var). Resolved PATH binary is still WARNING-logged
+  at the absolute path even with opt-in, and `os.path.abspath()`'d
+  so a relative PATH entry can't redirect via cwd change.
+
+- **`--no-lock` / `--no-git-commit` require explicit opt-in.**
+  These flags exist for human-driven debugging — they switch off
+  concurrent-write safety and git-as-source-of-truth respectively.
+  1.4.2 protected them only via the write_workflow.md fragment
+  ("agents must not use without human approval"). Documentation
+  is not a technical control. 1.4.3 adds `_check_unsafe_flags()`
+  to both `kb-write` and `kb-importer` CLIs: any run combining
+  these flags with no `KB_WRITE_ALLOW_UNSAFE_FLAGS=1` in the
+  environment exits 2 with a message pointing at the opt-in. The
+  env var name is shared across both tools (single
+  `export KB_WRITE_ALLOW_UNSAFE_FLAGS=1` covers a debugging
+  session that hits both). `--no-reindex` is intentionally NOT
+  gated — stale search is recoverable; the others aren't.
+
+- **GitHub Actions pinned to commit SHAs.** Workflow previously
+  used version-tag refs (checkout v4, setup-python v5, cache v4,
+  upload-artifact v4) — refs the action owner can overwrite at
+  any point. 1.4.3 pins each step to its release commit SHA with
+  the resolved version recorded in a trailing comment for
+  Dependabot review. The current CI doesn't carry secrets, but
+  the practice should predate any future addition.
+
+- **Secret scanner extended to `.github/` and root metadata.**
+  `check_no_secrets.py` previously skipped workflow YAMLs and
+  root release-note files. 1.4.3 adds `.github/` to SCAN_DIRS
+  and `CHANGELOG.md` / `UPGRADING.md` to the root file list,
+  with both changelog files added to the CJK-exempt set
+  (release notes legitimately quote user feedback verbatim).
+  One historical home-path placeholder in a 0.29.4 release note
+  replaced with generic phrasing.
+
+### Refactored
+
+- **`kb_write/safety.py` and `kb_importer/safety.py` extracted.**
+  The unsafe-flag gate function and its env-var sentinel moved
+  to standalone modules so unit tests can import them without
+  pulling in `frontmatter`, `sqlite-vec`, or the rest of the
+  command tree. cli.py re-exports both names so the public
+  surface is unchanged. Same shape as `kb_write/audit.py`,
+  `kb_write/zones.py` etc. — small, focused, dependency-free.
+
+### Verification
+
+- 550 unit tests pass (was 539; +11 new tests covering the gates
+  and PATH default-deny). Stdlib-runner + real-pytest both green.
+- 46 e2e tests pass.
+- Secret scanner clean over 168 source files (was 167 — added
+  `.github/workflows/ci.yml`).
+- post_install_test.py updated to inject `KB_WRITE_ALLOW_UNSAFE_FLAGS=1`
+  in its `cli()` helper since the smoke test deliberately uses
+  `--no-git-commit --no-reindex` to skip git/reindex setup.
+
 ## [1.4.2] — 2026-04-25
 
 Security & robustness patch. Reviewer audited the orchestration
@@ -973,9 +1049,9 @@ user-facing upgrade guide that had been missing.
 - All four lints clean.
 - 404/404 unit tests pass.
 - Editable-install empirical test: `cd /tmp/ws/ee-kb` (workspace
-  A) with editable install from `/home/llm-agent/...` (workspace
-  B) now resolves `_find_workspace_config` / `find_workspace_config`
-  / `kb_root_from_env` all to workspace A.
+  A) with editable install from a separate workspace B now resolves
+  `_find_workspace_config` / `find_workspace_config` /
+  `kb_root_from_env` all to workspace A.
 
 ## [0.29.5] — 2026-04-24
 

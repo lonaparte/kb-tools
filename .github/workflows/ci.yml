@@ -43,15 +43,19 @@ jobs:
         python: ["3.10", "3.13"]
 
     steps:
-      - uses: actions/checkout@v4
+      # 1.4.3: third-party Actions are pinned to immutable commit
+      # SHAs (not version tags) so a compromised tag can't silently
+      # change CI behaviour mid-flight. Comments record which release
+      # the SHA corresponds to — bump alongside Dependabot updates.
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
       - name: Set up Python ${{ matrix.python }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38  # v5.4.0
         with:
           python-version: ${{ matrix.python }}
 
       - name: Cache pip
-        uses: actions/cache@v4
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57  # v4.2.0
         with:
           path: ~/.cache/pip
           # Bust the cache whenever any pyproject.toml or VERSION
@@ -129,14 +133,14 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38  # v5.4.0
         with:
           python-version: "3.13"
       - name: Build release zip
         run: bash scripts/make_release.sh
       - name: Upload zip as artefact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1  # v4.6.1
         with:
           name: kb-tools-release-zip
           path: dist/kb-tools-*.zip
