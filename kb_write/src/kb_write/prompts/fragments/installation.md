@@ -35,6 +35,8 @@ cd <parent>/.ee-kb-tools
 python -m venv .venv
 source .venv/bin/activate
 
+# Topological order: kb_core → kb_write → kb_importer → kb_mcp → kb_citations
+pip install -e ./kb_core
 pip install -e ./kb_write
 pip install -e ./kb_importer
 pip install -e "./kb_mcp[gemini]"   # or without [gemini] for openai-only

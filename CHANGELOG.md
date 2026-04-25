@@ -5,6 +5,21 @@ All notable changes to ee-kb-tools.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is our own (calendar-ish, per-major-iteration).
 
+## [1.4.8] — 2026-04-25
+
+### Fixed (docs / CI)
+- **Install order normalised to `kb_core → kb_write → kb_importer →
+  kb_mcp → kb_citations`** across all 6 places that document it
+  (`scripts/deploy.sh` already correct; `.github/workflows/ci.yml`,
+  `DEPLOYMENT.md`, `DEVELOPMENT.md`, `CONTRIBUTING.md` ×2,
+  `kb_write/.../prompts/fragments/installation.md` updated). Two
+  variants existed: a non-broken-but-different order in CI/CONTRIBUTING
+  (kb_mcp before kb_importer) and a *broken* order in
+  DEPLOYMENT.md/DEVELOPMENT.md (kb_importer before kb_write — fails
+  because kb_importer hard-pins kb_write and pip can't fetch it from
+  PyPI). The prompt fragment was also missing kb_core entirely
+  (stale since the v27 extraction).
+
 ## [1.4.7] — 2026-04-25
 
 ### Hardened

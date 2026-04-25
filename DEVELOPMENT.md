@@ -11,10 +11,13 @@ your disk.
 cd /path/to/kb-tools           # wherever you put the repo
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e kb_core/ kb_importer/ kb_mcp/ kb_write/ kb_citations/
+pip install -e kb_core/ kb_write/ kb_importer/ kb_mcp/ kb_citations/
 ```
 
-`kb_core` must go first — the other four depend on it.
+Topological order: `kb_core → kb_write → kb_importer → kb_mcp →
+kb_citations`. `kb_core` first because the other four pin it as a
+versioned dep; `kb_write` next because `kb_importer` hard-depends
+on it; `kb_citations` last because it needs `kb_mcp` (soft, `[link]`).
 
 The venv and `*.egg-info/` are `.gitignore`d. `pip install -e`
 writes a `.pth` file into the venv's `site-packages/` pointing at

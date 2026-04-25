@@ -66,15 +66,19 @@ jobs:
             pip-${{ matrix.python }}-
 
       - name: Install all 5 packages editable
-        # kb_core first — the other four pin `kb-core==<version>`
-        # so without an editable install on the path, pip can't
-        # resolve the pin to anything (it isn't on PyPI).
+        # Topological install order:
+        #   kb_core → kb_write → kb_importer → kb_mcp → kb_citations
+        # kb_core first — the other four pin `kb-core==<version>` so
+        # without an editable install on the path, pip can't resolve
+        # the pin (it isn't on PyPI). kb_importer hard-depends on
+        # kb_write, so kb_write must be installed before kb_importer.
+        # kb_citations soft-depends on kb_mcp via the [link] extra.
         run: |
           python -m pip install --upgrade pip
           pip install -e ./kb_core
           pip install -e ./kb_write
-          pip install -e "./kb_mcp[write,gemini]"
           pip install -e ./kb_importer
+          pip install -e "./kb_mcp[write,gemini]"
           pip install -e ./kb_citations
           pip install pytest
 

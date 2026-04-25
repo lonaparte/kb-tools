@@ -158,19 +158,22 @@ python -m pip install --upgrade pip
 
 ### 5. Install the five packages (order matters)
 
-`kb_core` is the dependency root. All other packages import from
-it, so it must go in first. The bundle packages are editable
+Topological install order:
+`kb_core → kb_write → kb_importer → kb_mcp → kb_citations`.
+
+`kb_core` is the dependency root — the other four pin
+`kb-core==<version>` and won't resolve without it on the path.
+`kb_importer` hard-depends on `kb_write`, so `kb_write` must be
+installed before `kb_importer`. `kb_citations` depends on `kb_mcp`
+(soft, via the `[link]` extra). The bundle packages are editable
 installs so users get updates via `cd .ee-kb-tools && git pull`
 (once kb-tools is set up with the deployment repo as origin).
 
 ```bash
-# kb_core first
 pip install -e kb_core/
-
-# Then the four bundle packages
+pip install -e kb_write/
 pip install -e kb_importer/
 pip install -e kb_mcp/
-pip install -e kb_write/
 pip install -e kb_citations/
 ```
 

@@ -12,15 +12,16 @@ welcome.
 git clone <repo>
 cd ee-kb-tools
 
-# Install the five packages in a single venv. kb_core must come
-# first — the other four pin it as a versioned dependency and won't
-# resolve without the local editable install on the path.
+# Install the five packages in a single venv. Topological order:
+# kb_core → kb_write → kb_importer → kb_mcp → kb_citations.
+# kb_core first (everything pins it); kb_write before kb_importer
+# (hard dep); kb_citations last (soft dep on kb_mcp via [link]).
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e kb_core/
 pip install -e kb_write/
-pip install -e kb_mcp/
 pip install -e kb_importer/
+pip install -e kb_mcp/
 pip install -e kb_citations/
 ```
 
@@ -40,13 +41,13 @@ Five Python packages:
 - `kb_citations/` — Semantic Scholar / OpenAlex citation fetcher
   and link builder
 
-Install each as editable:
+Install each as editable, in topological order:
 
 ```bash
-pip install -e kb_core/      # must be first
+pip install -e kb_core/
+pip install -e kb_write/
 pip install -e kb_importer/
 pip install -e kb_mcp/
-pip install -e kb_write/
 pip install -e kb_citations/
 ```
 
