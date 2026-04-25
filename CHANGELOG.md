@@ -5,6 +5,21 @@ All notable changes to ee-kb-tools.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is our own (calendar-ish, per-major-iteration).
 
+## [1.4.7] — 2026-04-25
+
+### Hardened
+- **Static-analysis lints now cover `kb_core`.** `check_no_secrets.py`
+  and `check_no_system_paths.py` were both scanning the four
+  downstream packages but had skipped `kb_core/` since the v27
+  extraction. Adds 10 files to secret scan (170 → 180), 8 to the
+  system-path scan (131 → 139). Still clean.
+- **`deploy.sh` workspace-parent path canonicalised via
+  `CDPATH= cd ... && pwd -P`.** Pre-1.4.7 only stripped a single
+  trailing slash; `///`, `//foo//bar`, and symlink chains slipped
+  through. `CDPATH=` prefix isolates the `cd` from a user shell's
+  CDPATH alias. Existence is checked before canonicalising so a
+  bad path errors out at the same boundary as before.
+
 ## [1.4.6] — 2026-04-25
 
 ### Fixed

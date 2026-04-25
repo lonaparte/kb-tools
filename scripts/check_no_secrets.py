@@ -45,8 +45,10 @@ from pathlib import Path
 # Directories to scan (relative to .ee-kb-tools/)
 # 1.4.3: `.github` covers workflow YAMLs (CI uses no secrets today,
 # but we want any future addition caught before push).
+# 1.4.7: kb_core was missing — workspace.py / paths.py live there
+# in v27 and need the same baseline as the four downstream packages.
 SCAN_DIRS = [
-    "kb_importer", "kb_mcp", "kb_write", "kb_citations",
+    "kb_core", "kb_importer", "kb_mcp", "kb_write", "kb_citations",
     "scripts",
     ".github",
 ]

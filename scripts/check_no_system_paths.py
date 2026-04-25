@@ -31,7 +31,11 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent.parent
+# 1.4.7: kb_core added — workspace.py / paths.py live there in v27,
+# and the no-system-paths invariant applies to them as much as the
+# four downstream packages.
 SRC_DIRS = [
+    ROOT / "kb_core" / "src",
     ROOT / "kb_importer" / "src",
     ROOT / "kb_mcp" / "src",
     ROOT / "kb_write" / "src",

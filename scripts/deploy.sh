@@ -31,22 +31,26 @@ if [ $# -ne 1 ]; then
     exit 2
 fi
 
-WORKSPACE_PARENT="$1"
-WORKSPACE_PARENT="${WORKSPACE_PARENT%/}"  # strip trailing slash
+WORKSPACE_PARENT_ARG="$1"
 
-# 1.4.2: refuse "/" specifically. The trailing-slash strip above
-# turns "/" into "", so we test both. Without this guard, passing
-# "/" would create a `.ee-kb-tools/` at the filesystem root —
-# confusing rather than catastrophic, but worth blocking outright.
-if [ -z "$WORKSPACE_PARENT" ] || [ "$WORKSPACE_PARENT" = "/" ]; then
-    echo "error: refusing to deploy into the filesystem root (/)" >&2
-    echo "       pass an explicit workspace parent dir like ~/research" >&2
+# ----- sanity + path canonicalisation -----
+# 1.4.7: normalise via `cd ... && pwd -P` so trailing slashes,
+# duplicate slashes (//a, ///b), relative paths, ~-prefixes, and
+# symlink chains all collapse into one deterministic absolute path
+# before any further checks. CDPATH= prevents a user's `cd` aliases
+# from redirecting us to a different directory than the literal arg.
+# Pre-1.4.7 the path was just `${1%/}` — only the trailing-slash
+# case was covered, so e.g. `///` slipped past the root guard.
+if [ ! -d "$WORKSPACE_PARENT_ARG" ]; then
+    echo "error: $WORKSPACE_PARENT_ARG does not exist" >&2
     exit 2
 fi
+WORKSPACE_PARENT="$(CDPATH= cd -- "$WORKSPACE_PARENT_ARG" && pwd -P)"
 
-# ----- sanity -----
-if [ ! -d "$WORKSPACE_PARENT" ]; then
-    echo "error: $WORKSPACE_PARENT does not exist" >&2
+# Refuse "/" — both confusing and not what anyone meant.
+if [ "$WORKSPACE_PARENT" = "/" ]; then
+    echo "error: refusing to deploy into the filesystem root (/)" >&2
+    echo "       pass an explicit workspace parent dir like ~/research" >&2
     exit 2
 fi
 if [ ! -d "$WORKSPACE_PARENT/ee-kb" ]; then
