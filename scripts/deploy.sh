@@ -34,6 +34,16 @@ fi
 WORKSPACE_PARENT="$1"
 WORKSPACE_PARENT="${WORKSPACE_PARENT%/}"  # strip trailing slash
 
+# 1.4.2: refuse "/" specifically. The trailing-slash strip above
+# turns "/" into "", so we test both. Without this guard, passing
+# "/" would create a `.ee-kb-tools/` at the filesystem root —
+# confusing rather than catastrophic, but worth blocking outright.
+if [ -z "$WORKSPACE_PARENT" ] || [ "$WORKSPACE_PARENT" = "/" ]; then
+    echo "error: refusing to deploy into the filesystem root (/)" >&2
+    echo "       pass an explicit workspace parent dir like ~/research" >&2
+    exit 2
+fi
+
 # ----- sanity -----
 if [ ! -d "$WORKSPACE_PARENT" ]; then
     echo "error: $WORKSPACE_PARENT does not exist" >&2

@@ -825,7 +825,12 @@ def test_longform_writes_paper_md(tmp_kb: Path):
     assert "kind: paper" in text
     assert "zotero_key: MYBOOK99" in text
     assert "item_type: book_chapter" in text
-    assert "kb_refs: [papers/MYBOOK99]" in text
+    # 1.4.2: longform frontmatter is now built via yaml.safe_dump
+    # rather than hand-concatenated f-strings, so kb_refs may be
+    # emitted as flow style `[papers/X]` OR block style
+    # `- papers/X`. Assert content, not exact YAML form.
+    assert "kb_refs:" in text
+    assert "papers/MYBOOK99" in text
     ok("longform: writes papers/<KEY>-chNN.md with kind=paper")
 
 

@@ -40,9 +40,12 @@ v27 — host-identity fields default OFF:
 from __future__ import annotations
 
 import json
+import logging
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 
 AUDIT_REL_PATH = ".kb-mcp/audit.log"
@@ -128,16 +131,41 @@ def record(
                 # the euid. Preserve backwards-compat sentinel.
                 entry["user"] = "unknown"
         if note:
-            entry["note"] = note
+            # 1.4.2: truncate caller-supplied free-form fields. The
+            # module docstring above promises atomic single-line
+            # append for entries < PIPE_BUF (4096B on Linux); a
+            # caller passing a multi-KB note could push the encoded
+            # line over the boundary and break the atomicity
+            # guarantee under concurrent writes. events.jsonl
+            # already truncates `detail` to 500B; mirror that here.
+            entry["note"] = note[:1000]
         if extra:
             for k, v in extra.items():
                 if k not in entry:
-                    entry[k] = v
+                    # Stringify+truncate non-trivial values so a
+                    # caller stuffing a multi-MB blob in `extra`
+                    # can't blow up the audit line either. Trivial
+                    # types (bool / int / small str) round-trip
+                    # losslessly through this clamp.
+                    if isinstance(v, str) and len(v) > 1000:
+                        entry[k] = v[:1000]
+                    else:
+                        entry[k] = v
 
         log_dir = Path(kb_root) / ".kb-mcp"
         log_dir.mkdir(parents=True, exist_ok=True)
         log_path = log_dir / "audit.log"
         line = json.dumps(entry, ensure_ascii=False) + "\n"
+        # Final belt-and-braces: if the encoded line is still over
+        # PIPE_BUF, log a warning rather than silently violating the
+        # docstring's atomicity claim. The line is still written
+        # (data preservation > docstring).
+        if len(line.encode("utf-8")) > 4096:
+            log.warning(
+                "audit line exceeds PIPE_BUF (%d bytes); single-write "
+                "atomicity is not guaranteed under concurrent writes.",
+                len(line),
+            )
         with open(log_path, "a", encoding="utf-8") as f:
             f.write(line)
             f.flush()

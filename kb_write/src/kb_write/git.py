@@ -8,10 +8,26 @@ We shell out to the `git` binary rather than using a library because:
 
 By default, `kb-write` auto-commits after every successful write
 (see AGENT-WRITE-RULES §6). Users can disable per-call or globally.
+
+1.4.2 hardening: every git invocation is built via `_git_argv()`,
+which prepends `-c core.hooksPath=/dev/null` by default. Reasoning:
+kb-write is invoked by automated agents (MCP tools, CLI scripts,
+periodic re-summarize jobs) on a KB repo whose .git/hooks/ contents
+might not be controlled by the same actor that audited the agent.
+A KB cloned from an untrusted source, or a KB shared with collaborators
+who've added hooks for their own workflows, would otherwise let
+those hooks run code on every kb-write commit. Disabling hooks by
+default keeps the auto-commit path strictly mechanical.
+
+Users who genuinely want pre-commit hooks to fire on kb-write
+auto-commits can pass `run_hooks=True` per call (or set the
+config option once it's exposed); see auto_commit() / commit_staged()
+signatures.
 """
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 from pathlib import Path
 from typing import Sequence
@@ -21,6 +37,35 @@ log = logging.getLogger(__name__)
 
 class GitError(Exception):
     pass
+
+
+# 1.4.2: where to point GIT_HOOKSPATH when run_hooks=False.
+# /dev/null on POSIX, NUL on Windows. Both tell git "the hooks dir
+# is empty / doesn't exist", which it accepts cleanly.
+_NULL_HOOKS_PATH = "NUL" if os.name == "nt" else "/dev/null"
+
+
+def _git_argv(kb_root: Path, *args: str, run_hooks: bool = False) -> list[str]:
+    """Build a `git -C <kb_root> [-c core.hooksPath=...] <args>` argv.
+
+    Centralises two repeated bits — the `-C kb_root` plus the
+    hooks-disable flag — so every git call site gets the same
+    treatment without each caller needing to remember.
+
+    `run_hooks=False` (default) explicitly points core.hooksPath at
+    the platform null device so .git/hooks/ contents are skipped.
+    `run_hooks=True` builds a normal argv without the override, for
+    the rare case where a caller actually wants hooks to fire.
+
+    The `-C` form is used (not `--git-dir`) because it also sets
+    the working directory, which some hooks rely on if the caller
+    re-enables them.
+    """
+    argv = ["git", "-C", str(kb_root)]
+    if not run_hooks:
+        argv += ["-c", f"core.hooksPath={_NULL_HOOKS_PATH}"]
+    argv += list(args)
+    return argv
 
 
 # v0.27.4: bounded retry-with-backoff for git operations that can
@@ -90,6 +135,7 @@ def _run_git_with_retry(argv: list[str], *, max_attempts: int = 5):
 def is_git_repo(kb_root: Path) -> bool:
     """Check whether kb_root is (or is inside) a git repository."""
     try:
+        # rev-parse never invokes hooks; bare argv is fine here.
         r = subprocess.run(
             ["git", "-C", str(kb_root), "rev-parse", "--git-dir"],
             capture_output=True, text=True, check=False,
@@ -108,6 +154,7 @@ def auto_commit(
     *,
     message_body: str | None = None,
     enabled: bool = True,
+    run_hooks: bool = False,
 ) -> str | None:
     """Stage `files` and commit with a structured message.
 
@@ -148,7 +195,7 @@ def auto_commit(
     # to collide since `add` happens before `commit`.
     file_args = [str(f) for f in files]
     r = _run_git_with_retry(
-        ["git", "-C", str(kb_root), "add", "--"] + file_args,
+        _git_argv(kb_root, "add", "--", *file_args, run_hooks=run_hooks),
     )
     if r.returncode != 0:
         raise GitError(f"git add failed: {r.stderr.strip()}")
@@ -166,7 +213,7 @@ def auto_commit(
     # subject) rather than an error.
     return _commit_if_staged(
         kb_root, op=op, target=target, message_body=message_body,
-        files=file_args,
+        files=file_args, run_hooks=run_hooks,
     )
 
 
@@ -177,13 +224,25 @@ def commit_staged(
     *,
     message_body: str | None = None,
     enabled: bool = True,
+    files: Sequence[str] | None = None,
+    run_hooks: bool = False,
 ) -> str | None:
-    """Commit whatever is already staged in the index.
+    """Commit staged changes in the index.
 
     Use this after operations that stage their own changes — the main
     case is `git rm` for delete, which both removes the file and
     stages the removal. Calling `auto_commit` on the already-deleted
     path fails because `git add <nonexistent>` errors.
+
+    1.4.2 hardening: callers SHOULD pass `files=[<pathspec>]` so the
+    commit is scoped to exactly those paths. Without it,
+    `_commit_if_staged` falls through to "commit whatever's staged",
+    which would include any unrelated staged changes the user (or a
+    sibling process) made in the same repo. The `delete` op was the
+    motivating call site — pre-1.4.2 a delete could silently sweep
+    in user-staged changes alongside the file removal. The fallback
+    (None → all-staged) is retained for legacy callers; new ops
+    must pass pathspec.
 
     Returns SHA, or None if repo is clean / not a repo / disabled.
     """
@@ -195,6 +254,7 @@ def commit_staged(
 
     return _commit_if_staged(
         kb_root, op=op, target=target, message_body=message_body,
+        files=files, run_hooks=run_hooks,
     )
 
 
@@ -205,6 +265,7 @@ def _commit_if_staged(
     target: str,
     message_body: str | None,
     files: Sequence[str] | None = None,
+    run_hooks: bool = False,
 ) -> str | None:
     """Shared tail: check `git diff --cached --quiet`, commit if
     non-clean, return SHA.
@@ -220,7 +281,9 @@ def _commit_if_staged(
     # pathspec. Uses the retry wrapper — `git diff --cached`
     # doesn't itself take the index lock but reads the index, and
     # a mid-commit race can briefly surface transient errors.
-    diff_argv = ["git", "-C", str(kb_root), "diff", "--cached", "--quiet"]
+    diff_argv = _git_argv(
+        kb_root, "diff", "--cached", "--quiet", run_hooks=run_hooks,
+    )
     if files:
         diff_argv += ["--"] + list(files)
     r = _run_git_with_retry(diff_argv)
@@ -236,7 +299,9 @@ def _commit_if_staged(
         msg_parts.append(message_body.rstrip())
     full_msg = "\n".join(msg_parts)
 
-    commit_argv = ["git", "-C", str(kb_root), "commit", "-m", full_msg]
+    commit_argv = _git_argv(
+        kb_root, "commit", "-m", full_msg, run_hooks=run_hooks,
+    )
     if files:
         commit_argv += ["--"] + list(files)
     r = _run_git_with_retry(commit_argv)
@@ -262,10 +327,26 @@ def _commit_if_staged(
         raise GitError(f"git commit failed: {r.stderr.strip() or r.stdout.strip()}")
 
     # Grab the SHA.
-    r = subprocess.run(
-        ["git", "-C", str(kb_root), "rev-parse", "HEAD"],
-        capture_output=True, text=True, check=False,
-    )
+    #
+    # 1.4.2: when `files` is set, prefer `git log -1 --format=%H --
+    # <pathspec>`. Reasoning: at high concurrency, between our
+    # `git commit -- <files>` and the `rev-parse HEAD` below, a
+    # sibling process could land another commit, leaving HEAD
+    # pointing at the sibling's SHA — and we'd then audit-log a
+    # stranger's commit as ours. Limiting the lookup by pathspec
+    # gives us "the most recent commit that touched this file",
+    # which is OUR commit by definition (we just made it).
+    if files:
+        r = subprocess.run(
+            ["git", "-C", str(kb_root), "log", "-1", "--format=%H",
+             "--"] + list(files),
+            capture_output=True, text=True, check=False,
+        )
+    else:
+        r = subprocess.run(
+            ["git", "-C", str(kb_root), "rev-parse", "HEAD"],
+            capture_output=True, text=True, check=False,
+        )
     if r.returncode != 0:
         return None
     return r.stdout.strip()

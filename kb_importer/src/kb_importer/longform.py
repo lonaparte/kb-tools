@@ -590,24 +590,41 @@ def _write_chapter_paper(
     # Frontmatter. kind=paper; zotero_key shared with the parent;
     # item_type flags it as a chapter so consumers can treat it
     # slightly differently (e.g. omit from citation-count refresh).
-    fm_lines = [
-        "---",
-        "kind: paper",
-        f"zotero_key: {paper_key}",
-        "item_type: book_chapter",
-        f'title: "{_yaml_escape(paper_title)} — Chapter '
-        f'{chapter.number}: {_yaml_escape(chapter.title)}"',
-        f"chapter_number: {chapter.number}",
-        f"parent_paper: papers/{paper_key}",
-    ]
+    #
+    # 1.4.2: build via yaml.safe_dump rather than hand-concatenating
+    # f-strings. Pre-1.4.2 only `title` went through _yaml_escape;
+    # zotero_key / parent_paper / chapter_number / source_pages /
+    # date were inserted directly. Today's Zotero keys are
+    # [A-Z0-9]{8} so safe — but a future Zotero schema change, or a
+    # chapter title containing `\n` / `"` / `:` would silently
+    # produce malformed YAML and the next read would yield None
+    # frontmatter, making the chapter look "unprocessed" forever
+    # and burning LLM tokens on repeat. safe_dump handles all of
+    # this correctly by construction.
+    import yaml as _yaml
+    _fm = {
+        "kind": "paper",
+        "zotero_key": paper_key,
+        "item_type": "book_chapter",
+        "title": (
+            f"{paper_title} — Chapter {chapter.number}: "
+            f"{chapter.title}"
+        ),
+        "chapter_number": chapter.number,
+        "parent_paper": f"papers/{paper_key}",
+    }
     if chapter.pages:
-        fm_lines.append(f'source_pages: "{chapter.pages}"')
-    fm_lines.append("fulltext_processed: true")
-    fm_lines.append("fulltext_source: llm_longform")
-    fm_lines.append(f"kb_refs: [papers/{paper_key}]")
-    fm_lines.append("kb_tags: [longform, chapter]")
-    fm_lines.append(f'longform_generated_at: "{date_iso}"')
-    fm_lines.append("---")
+        _fm["source_pages"] = chapter.pages
+    _fm["fulltext_processed"] = True
+    _fm["fulltext_source"] = "llm_longform"
+    _fm["kb_refs"] = [f"papers/{paper_key}"]
+    _fm["kb_tags"] = ["longform", "chapter"]
+    _fm["longform_generated_at"] = date_iso
+
+    fm_block = _yaml.safe_dump(
+        _fm, sort_keys=False, allow_unicode=True, default_flow_style=False
+    ).rstrip()
+    fm_lines = ["---", fm_block, "---"]
 
     # Body: chapter-title heading, then the LLM-generated content
     # wrapped inside kb-fulltext markers (so it's found by the

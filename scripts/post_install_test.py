@@ -110,6 +110,18 @@ def skip(reason: str):
     raise _Skip(reason)
 
 
+# 1.4.2: cleanup safety. Files we create during the smoke run get
+# their absolute paths appended here, AND a unique marker injected
+# into their body. Cleanup deletes only paths in the list AND only
+# if their contents still contain the marker. The marker includes
+# this run's UUID so a stale file from a previous run doesn't get
+# deleted by a later run unintentionally either.
+import uuid
+_SMOKE_TEST_RUN_ID = uuid.uuid4().hex[:12]
+_SMOKE_TEST_MARKER = f"<!-- kb-post-install-smoke-test:{_SMOKE_TEST_RUN_ID} -->"
+_SMOKE_TEST_PATHS: list[Path] = []
+
+
 # ==============================================================
 # Utilities
 # ==============================================================
@@ -188,7 +200,14 @@ def test_kb_write_init(kb_root: Path, tools_dir: Path):
 
 def test_create_thought(kb_root: Path):
     def _():
-        body = "This is a smoke test thought.\n"
+        # 1.4.2: embed a per-run marker in the body so cleanup can
+        # cross-check identity (path tracking + content marker), not
+        # just match a filename glob that could collide with user
+        # content.
+        body = (
+            f"This is a smoke test thought.\n\n"
+            f"{_SMOKE_TEST_MARKER}\n"
+        )
         body_file = kb_root / "_tmp_body.md"
         body_file.write_text(body)
         try:
@@ -205,6 +224,10 @@ def test_create_thought(kb_root: Path):
             thoughts = list((kb_root / "thoughts").glob("*post-install-smoke-test*.md"))
             if not thoughts:
                 raise RuntimeError(f"thought file not found: {r.stdout}")
+            # Track the exact paths for cleanup-safe deletion later.
+            for t in thoughts:
+                if t not in _SMOKE_TEST_PATHS:
+                    _SMOKE_TEST_PATHS.append(t)
             return f"created {thoughts[0].name}"
         finally:
             body_file.unlink(missing_ok=True)
@@ -494,21 +517,38 @@ def main():
     if cleanup_workspace:
         shutil.rmtree(parent, ignore_errors=True)
     else:
-        # Running against a real workspace — cleanup the smoke-test
-        # artifacts we wrote. We recognise them by the "smoke-test"
-        # substring in the filename (matches both the thought slug
-        # and any future topic slug). Only delete files we KNOW we
-        # created; never touch user's real content.
-        smoke_files = list((kb_root / "thoughts").glob(
-            "*post-install-smoke-test*.md"
-        ))
-        for f in smoke_files:
+        # 1.4.2: only delete EXACT paths the smoke test recorded, plus
+        # require each to carry the smoke-test marker in its
+        # frontmatter. Pre-1.4.2 cleanup used a glob on
+        # `*post-install-smoke-test*.md`, which would silently delete
+        # any user file whose slug happened to contain that substring.
+        # Now we cross-check both the path (must be in tracked list)
+        # AND the file contents (must contain the marker we wrote).
+        cleaned = 0
+        for tracked in _SMOKE_TEST_PATHS:
+            if not tracked.exists():
+                continue
             try:
-                f.unlink()
+                content = tracked.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            if _SMOKE_TEST_MARKER not in content:
+                # File at the tracked path no longer contains our
+                # marker — user must have edited / replaced it.
+                # Refuse to delete, surface a warning.
+                print(
+                    f"\n  ⚠  refusing to delete {tracked} — file no "
+                    f"longer carries the smoke-test marker; was it "
+                    f"replaced by user content?"
+                )
+                continue
+            try:
+                tracked.unlink()
+                cleaned += 1
             except OSError:
                 pass
-        if smoke_files:
-            print(f"\n  cleaned up {len(smoke_files)} smoke-test artifact(s) "
+        if cleaned:
+            print(f"\n  cleaned up {cleaned} smoke-test artifact(s) "
                   f"from {kb_root}")
         if args.workspace is None:
             print(f"\n  workspace kept at {parent}")

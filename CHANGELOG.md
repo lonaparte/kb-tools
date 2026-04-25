@@ -5,6 +5,168 @@ All notable changes to ee-kb-tools.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is our own (calendar-ish, per-major-iteration).
 
+## [1.4.2] — 2026-04-25
+
+Security & robustness patch. Reviewer audited the orchestration
+layer (deploy, locks, atomic writes, git, kb-write ops, kb-mcp
+write tools) and surfaced 16 findings across two passes. Most are
+defense-in-depth — the codebase already had above-average security
+posture (list-form subprocess, safe_resolve path bounds, atomic
+write + mtime guard, secret-policy in scaffolds). The fixes here
+close two ACTUAL exposure paths (PATH-shadowed kb-mcp + delete
+committing whole index) and harden a dozen smaller surfaces.
+
+### Fixed (high risk)
+
+- **kb-mcp resolved by absolute path, not bare PATH.**
+  `kb_write/reindex.py:trigger_reindex` previously did
+  `subprocess.run(["kb-mcp", ...])`, trusting whatever PATH
+  resolution kicked in. A user with a writeable directory
+  prepended to PATH (or a malicious binary in `~/bin/`) would
+  have every kb-write call silently execute that binary post-
+  write. New `_resolve_kb_mcp(kb_root)` tries, in order:
+  `<workspace>/.ee-kb-tools/.venv/bin/kb-mcp` (deploy.sh layout),
+  `<sys.executable's dir>/kb-mcp` (developer venv), then
+  `shutil.which()` with an INFO-level log of the absolute path
+  so a suspicious resolution is at least visible. The subprocess
+  is invoked with the absolute path so PATH mutation mid-run
+  can't redirect it.
+
+- **`kb-write delete` no longer commits the whole git index.**
+  The `delete` op stages its removal via `git rm`, then called
+  `commit_staged()` with no pathspec. Pre-1.4.2 that committed
+  whatever else happened to be staged (user-staged unrelated
+  changes, sibling-process stages). Now passes
+  `files=[address.md_rel_path]` so only the deletion lands in
+  the commit. `commit_staged()` gained a `files=` parameter for
+  this; legacy callers passing None retain the historical
+  whole-index behavior.
+
+- **git invocations disable hooks by default.** New `_git_argv()`
+  helper prepends `-c core.hooksPath=<null-device>` to every git
+  command except read-only `is_git_repo()` / `rev-parse`. Hooks
+  are arbitrary code; a KB cloned from an untrusted source, or
+  shared with collaborators who've added project-specific hooks,
+  shouldn't have those hooks run silently on every kb-write
+  auto-commit. `auto_commit()` and `commit_staged()` accept
+  `run_hooks=True` to re-enable per-call.
+
+- **`import_lock.py` no longer unlinks lock file on success.**
+  Pre-1.4.2 the success path released the flock and unlinked
+  the file, opening a race window where two processes could
+  both believe they hold the lock (one flocked the just-deleted
+  inode, the other created a fresh inode). `kb_write/atomic.py`
+  already had a long warning comment about this; import_lock
+  now follows the same rule. Tradeoff: a small empty file
+  remains on disk after release. Accepted.
+
+- **`kb_importer/commands/import_pipeline.py`** missing
+  `from pathlib import Path` import. Used only in type-hints
+  today (caught by `from __future__ import annotations`), so
+  no current runtime impact, but a future
+  `isinstance(x, Path)` check would NameError. Added.
+
+### Fixed (medium risk)
+
+- **`post_install_test.py` cleanup uses tracked paths + content
+  marker, not glob.** Pre-1.4.2 cleanup deleted any file matching
+  `thoughts/*post-install-smoke-test*.md` — would unintentionally
+  delete user-authored thoughts that happened to share that
+  substring. Now records exact paths during creation, embeds a
+  per-run UUID marker in the body, and on cleanup verifies BOTH
+  conditions before deletion. Refuses to delete with a warning
+  if the file at a tracked path no longer carries the marker.
+
+- **`init.py --refresh` now passes `expected_mtime` to
+  `atomic_write`.** Closes a TOCTOU window between the refresh
+  read and the rendered-merge write. Other init paths and all
+  thought / topic / preference ops already had mtime guards;
+  refresh was the one omission.
+
+- **`init.py` refuses to scaffold into a non-empty non-KB dir
+  unless --force.** Prevents the typo'd `--kb-root ~` /
+  `--kb-root /tmp` accident. Heuristic: existing dir + has
+  children + none of those children look like KB markers
+  (`papers/`, `thoughts/`, `.kb-mcp/`, `CLAUDE.md`, etc.) →
+  raise `InitNonEmptyDirError`. `--force` bypasses.
+
+- **`deploy.sh` refuses `WORKSPACE_PARENT="/"`.** Pre-1.4.2 a
+  bare `/` would create `/.ee-kb-tools/`. Confusing rather than
+  destructive (cleanup is scoped), but worth blocking outright.
+
+- **`longform.py` chapter md frontmatter built via `yaml.safe_dump`.**
+  Pre-1.4.2 the frontmatter was hand-concatenated f-strings and
+  only `title` went through `_yaml_escape`. Today's Zotero keys
+  are `[A-Z0-9]{8}` so safe in practice, but a chapter title
+  containing `\n` / `"` / `:` would silently produce malformed
+  YAML — which the next read would interpret as "no frontmatter",
+  flag the chapter as unprocessed, and re-summarize on every
+  run, burning LLM tokens. `safe_dump` handles all shapes
+  correctly by construction.
+
+### Fixed (low risk / hygiene)
+
+- **`git.py` SHA lookup uses pathspec-scoped `git log -1
+  --format=%H` when `files` is set.** Pre-1.4.2 it ran
+  `rev-parse HEAD` after the commit, which under high
+  concurrency could pick up a sibling commit's SHA. Now
+  `git log -1 --format=%H -- <pathspec>` returns the most
+  recent commit that touched OUR file specifically.
+
+- **`audit.py` truncates caller-supplied `note` and string
+  values in `extra` to 1000 chars, with a warning if the encoded
+  line still exceeds PIPE_BUF (4096B).** Honors the docstring's
+  atomicity claim for single-write append. `events.jsonl`
+  already truncates `detail` to 500B; audit now mirrors.
+
+- **`migrate_slugs.py` docstring** corrected to reflect actual
+  implementation (uses `shutil.move` + git's heuristic rename
+  detection on follow-up `git add`, NOT `git mv`).
+
+### Workflow + scaffold hardening
+
+- **kb-mcp.yaml scaffold + `OpenAIEmbeddingProvider`** warn
+  loudly when `openai_base_url` points at a non-official,
+  non-localhost host. Doesn't refuse — DashScope, Azure,
+  self-hosted public gateways are legit — but a tampered config
+  pointing at an attacker host now logs a WARNING with the
+  exact URL on every embedding call.
+
+- **`write_workflow.md` fragment** grew a "Flags an agent must
+  NOT use without explicit human approval" section listing
+  `--no-lock`, `--no-git-commit`, `--no-reindex`, raw git
+  commands targeting KB files, and `*_base_url` overrides.
+  This propagates into every workspace's `CLAUDE.md` /
+  `AGENTS.md` / `README.md` after `kb-write init --refresh`.
+
+### Deferred
+
+- **Windows write-lock fallback PID-file race** (audit A.5).
+  POSIX path uses `fcntl.flock` correctly; Windows still uses
+  the older PID-file approach with a known race. No Windows
+  users in scope; revisit if/when one shows up.
+
+### Test coverage
+
+- `test_security_wave1.py` — 9 new cases: kb-mcp resolution
+  prefers workspace venv over PATH, returns absolute path, None
+  when absent; `_git_argv` includes hooks override by default
+  and omits with `run_hooks=True`; `auto_commit` end-to-end
+  passes hooks-disabled; `commit_staged` scopes to pathspec or
+  falls through; `import_lock` keeps lock file (truncated) on
+  release.
+- Updated `test_import_lock.py` and `test_auto_commit_pathspec.py`
+  to match the new behaviors.
+
+### Verification
+
+- All four lints + docs-sync gate clean.
+- 539/539 unit tests via stdlib runner; same via real pytest
+  (CI workflow exercises both).
+- 46/46 e2e.
+- post-install smoke 14 pass / 2 expected skip.
+- `pre_release_full_check.sh` green end-to-end.
+
 ## [1.4.1] — 2026-04-25
 
 CI + quality infrastructure. Reviewer flagged that 1.4.0's release

@@ -18,6 +18,51 @@ from typing import Protocol
 log = logging.getLogger(__name__)
 
 
+# 1.4.2: hosts that are legitimate / expected destinations for
+# the configured embedding API key. We don't refuse anything else
+# — DashScope, Azure-OpenAI, self-hosted vLLM behind a public
+# domain are all valid use cases. We just print a warning so a
+# user whose YAML got modified by an agent / by an attacker
+# notices that their key is now flowing somewhere new.
+_OFFICIAL_BASE_HOSTS = frozenset({
+    "api.openai.com",
+    "openrouter.ai",
+})
+
+
+def _warn_if_unofficial_base_url(base_url: str, *, provider: str) -> None:
+    """Log a one-time warning when api_key is sent somewhere outside
+    the canonical provider host or localhost. See module comment
+    above _OFFICIAL_BASE_HOSTS for why this is a warning, not a
+    refusal. Idempotent — duplicate calls within one process are
+    safe (logging itself dedupes nothing, but the log line is
+    cheap)."""
+    from urllib.parse import urlparse
+
+    try:
+        host = urlparse(base_url).hostname or ""
+    except Exception:
+        return
+    host_lower = host.lower()
+    if host_lower in _OFFICIAL_BASE_HOSTS:
+        return
+    # localhost / loopback / .local — self-hosted gateway, fine.
+    if (
+        host_lower in ("localhost", "")
+        or host_lower.startswith("127.")
+        or host_lower == "::1"
+        or host_lower.endswith(".local")
+    ):
+        return
+    log.warning(
+        "%s embedding API key is being sent to a non-official "
+        "endpoint: %s. If you didn't configure this base_url "
+        "yourself, your config may have been tampered with. "
+        "Official hosts: %s.",
+        provider, base_url, ", ".join(sorted(_OFFICIAL_BASE_HOSTS)),
+    )
+
+
 class EmbeddingError(Exception):
     """Any problem producing embeddings (API failure, missing key, etc.)."""
 
@@ -106,6 +151,16 @@ class OpenAIEmbeddingProvider:
 
         kwargs = {"api_key": api_key}
         if base_url:
+            # 1.4.2: warn loudly when api_key is being sent to a
+            # non-official, non-localhost endpoint. Self-hosted
+            # gateways (Ollama, vLLM, LocalAI on localhost) are
+            # legitimate; arbitrary HTTPS endpoints should make the
+            # user explicitly aware that their configured key is
+            # going there. Doesn't refuse — that'd break legit
+            # cloud-compatible endpoints (DashScope, Azure, etc.).
+            _warn_if_unofficial_base_url(
+                base_url, provider=self._provider_label(),
+            )
             kwargs["base_url"] = base_url
         self._client = OpenAI(**kwargs)
 

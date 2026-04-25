@@ -153,16 +153,27 @@ def import_lock(kb_root: Path):
         try:
             yield
         finally:
-            # Best-effort cleanup. flock will drop automatically on
-            # close anyway; we also try to unlink so a tidy `ls`
-            # shows no stale file. Unlink failure is harmless.
+            # 1.4.2: do NOT unlink the lock file on the success
+            # path. Pre-1.4.2 we did, which created a race window:
+            #
+            #   A: close(fd)            → flock released
+            #   B: open(lock_path)      → same inode, flock OK
+            #   B: write own PID
+            #   A: unlink(lock_path)    → file gone
+            #   C: open(lock_path, O_CREAT)  → new inode
+            #   C: flock OK             → C and B both think they
+            #                             hold the lock simultaneously.
+            #
+            # kb_write/atomic.py's write_lock has the same warning
+            # baked into a long comment; this fix brings import_lock
+            # in line. The lock file is small (~80B); leaving it on
+            # disk is a tidy concern, not a correctness one.
+            #
+            # Only truncate-and-close. flock drops automatically on
+            # close.
             try:
                 os.ftruncate(fd, 0)
                 os.close(fd)
-            except OSError:
-                pass
-            try:
-                lock_path.unlink()
             except OSError:
                 pass
     except Exception:

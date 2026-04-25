@@ -187,12 +187,19 @@ def delete(
                 # `git rm` already staged; just commit what's in the index.
                 # Calling `git add <deleted_path>` here would fail with
                 # "pathspec did not match any files".
+                # 1.4.2: pass pathspec so the commit is scoped to
+                # the file we just removed. Without `files=`,
+                # `commit_staged` would commit the WHOLE index,
+                # potentially sweeping in unrelated user-staged
+                # changes. The deletion was made via `git rm`, so
+                # the staged change for this exact pathspec exists.
                 sha = commit_staged(
                     ctx.kb_root,
                     op=f"delete_{address.node_type}",
                     target=address.md_rel_path,
                     message_body=ctx.commit_message,
                     enabled=True,
+                    files=[address.md_rel_path],
                 )
             else:
                 # Non-git path: file was just unlinked; nothing to commit.

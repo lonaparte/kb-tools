@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "kb-write"
-version = "1.4.1"
+version = "1.4.2"
 description = "Client-agnostic write layer for the ee-kb knowledge base."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -31,7 +31,7 @@ classifiers = [
 # agents (Claude Code, opencode, etc.) via shell without pulling in
 # the heavy MCP / sqlite-vec / openai stack that kb-mcp carries.
 dependencies = [
-    "kb-core==1.4.1",
+    "kb-core==1.4.2",
     "python-frontmatter>=1.0.0",
     "PyYAML>=6.0",
 ]

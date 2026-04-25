@@ -52,6 +52,12 @@ class InitReport:
     overwritten: list[str]
 
 
+class InitNonEmptyDirError(Exception):
+    """Raised when init would create scaffolds in a non-empty existing
+    directory that doesn't already look like a kb_root. See init_kb's
+    docstring for the heuristic."""
+
+
 def init_kb(
     kb_root: Path,
     *,
@@ -66,8 +72,41 @@ def init_kb(
         preserving user content appended after the generated block.
         Static scaffolds untouched unless missing.
     force=True: overwrite everything.
+
+    1.4.2 hardening: refuses to scaffold into a non-empty directory
+    that doesn't already look like a kb_root. Specifically, if
+    `kb_root` exists, contains files, AND lacks both `.kb-mcp/` and
+    any of the canonical scaffold filenames (CLAUDE.md / README.md /
+    AGENTS.md / AGENT-WRITE-RULES.md), we raise InitNonEmptyDirError
+    so a user who fat-fingered `--kb-root ~` doesn't suddenly find
+    a `papers/` and `thoughts/` in their home directory. `--force`
+    bypasses the check.
     """
     kb_root = Path(kb_root).expanduser().resolve()
+
+    # 1.4.2: reject "init into pre-existing non-empty non-kb dir"
+    # unless --force. The criterion: directory has children AND none
+    # of those children look like kb_root markers.
+    if kb_root.exists() and kb_root.is_dir() and not force:
+        children = list(kb_root.iterdir())
+        if children:
+            kb_markers = {
+                ".kb-mcp", "papers", "thoughts", "topics",
+                ".agent-prefs", "AGENT-WRITE-RULES.md",
+                "CLAUDE.md", "AGENTS.md", "README.md",
+            }
+            child_names = {c.name for c in children}
+            if not (child_names & kb_markers):
+                raise InitNonEmptyDirError(
+                    f"refusing to scaffold a KB into {kb_root!s}: "
+                    f"directory exists and contains "
+                    f"{len(children)} item(s) that don't look like "
+                    f"a KB. If this really IS where you want the KB, "
+                    f"pass --force; otherwise pick an empty (or new) "
+                    f"directory. Common cause: typo'd --kb-root that "
+                    f"resolved to your home directory or /tmp."
+                )
+
     kb_root.mkdir(parents=True, exist_ok=True)
 
     created: list[str] = []
@@ -94,10 +133,16 @@ def init_kb(
             atomic_write(dest, new_content)
             overwritten.append(filename)
         elif refresh:
+            # 1.4.2: capture mtime before read so the atomic_write
+            # below can pass it as expected_mtime, catching any
+            # concurrent edit between our read and our write. Pre-1.4.2
+            # this read-modify-write was unguarded — the only init
+            # path without TOCTOU protection.
+            mtime_before = dest.stat().st_mtime
             existing = dest.read_text(encoding="utf-8")
             merged = prompt_renderer.preserve_user_suffix(existing, new_content)
             if merged != existing:
-                atomic_write(dest, merged)
+                atomic_write(dest, merged, expected_mtime=mtime_before)
                 refreshed.append(filename)
             else:
                 skipped.append(filename)

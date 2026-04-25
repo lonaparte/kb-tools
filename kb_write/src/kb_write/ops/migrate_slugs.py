@@ -17,8 +17,14 @@ This migrator:
     a canonicalised slug (lowercase, strip disallowed chars,
     preserve the date prefix, preserve the non-date remainder
     in kebab form)
-  - renames the file via atomic move + updates the git index
-    via `git mv` so history follows the rename
+  - renames the file via atomic move (`shutil.move` → `os.rename`
+    on the same filesystem). The follow-up batch `git add` then
+    stages the rename. Git's heuristic-based rename detection picks
+    this up correctly for content-unchanged renames within one
+    directory, which is the only shape this migrator produces. We
+    do NOT call `git mv` directly — kept the comment block here
+    because pre-1.4.2 docstrings used to say "uses git mv", which
+    was misleading.
   - skips when the canonical slug already exists (collision —
     reported, no overwrite)
   - one batch git commit for the whole run

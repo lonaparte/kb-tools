@@ -45,11 +45,14 @@ def test_commit_scopes_to_pathspec(monkeypatch, tmp_path):
 
     def fake_run(argv, capture_output, text, check):
         captured.append(list(argv))
-        # git add / diff / commit / rev-parse: return rc=0 for add + commit,
-        # rc=1 for diff (meaning "something staged") so we proceed to commit.
+        # git add / diff / commit / SHA-lookup: return rc=0 for add
+        # + commit, rc=1 for diff (meaning "something staged") so we
+        # proceed to commit.
         if "diff" in argv:
             return _make_result(1)  # non-zero = something staged
-        if "rev-parse" in argv:
+        # 1.4.2: SHA lookup is `git log -1 --format=%H -- <pathspec>`
+        # when files is set, falling back to rev-parse HEAD when not.
+        if "rev-parse" in argv or ("log" in argv and "--format=%H" in argv):
             return _make_result(0, stdout="abc1234\n")
         return _make_result(0)
 
@@ -72,9 +75,13 @@ def test_commit_scopes_to_pathspec(monkeypatch, tmp_path):
         )
 
     # The commit call must have `--` + the file as pathspec too.
-    commit_calls = [a for a in captured if a[:4] == [
-        "git", "-C", str(tmp_path), "commit"
-    ] or (len(a) > 4 and a[3] == "commit")]
+    # 1.4.2: argv now includes `-c core.hooksPath=…` between `-C
+    # <root>` and the subcommand, so we can't rely on a fixed index
+    # for "commit". Locate by membership instead.
+    commit_calls = [
+        a for a in captured
+        if "commit" in a and "diff" not in a and "log" not in a
+    ]
     assert commit_calls, "git commit was never called"
     for argv in commit_calls:
         assert "--" in argv, f"commit missing -- pathspec separator: {argv}"

@@ -1,0 +1,144 @@
+name: ci
+
+# Runs on every push to main and on every pull request. Mirrors the
+# release-gate scripts so the answer to "did this commit pass the
+# checks?" lives on GitHub, not on a maintainer's laptop. Release
+# rigor (pre_release_full_check.sh) still runs locally before
+# tagging — this CI is the *floor*, not the ceiling.
+#
+# YAML note: `on:` is quoted because YAML 1.1 parses bare `on` as a
+# boolean (PyYAML, ruamel — many parsers). GitHub Actions parses
+# this correctly either way, but the quoted form is unambiguous
+# under both YAML 1.1 and 1.2.
+"on":
+  push:
+    branches: [main]
+  pull_request:
+
+# Read-only token. None of the steps below need write access; the
+# release-zip job only uploads an artifact (which is its own
+# permission, not contents-write).
+permissions:
+  contents: read
+
+# Cancel an in-progress run on the same branch / PR when a newer
+# commit lands. Prevents wasted CI minutes on stale revisions.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONUNBUFFERED: "1"          # stream logs in real time
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"  # quiet the "new pip available" banner
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.10 = lowest supported (per pyproject.toml requires-python).
+        # 3.13 = current GitHub-runner stable. Catches both forward-
+        # and backward-compat regressions in one run.
+        python: ["3.10", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          # Bust the cache whenever any pyproject.toml or VERSION
+          # changes — those are the inputs that affect what pip
+          # actually downloads.
+          key: pip-${{ matrix.python }}-${{ hashFiles('**/pyproject.toml', 'VERSION') }}
+          restore-keys: |
+            pip-${{ matrix.python }}-
+
+      - name: Install all 5 packages editable
+        # kb_core first — the other four pin `kb-core==<version>`
+        # so without an editable install on the path, pip can't
+        # resolve the pin to anything (it isn't on PyPI).
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ./kb_core
+          pip install -e ./kb_write
+          pip install -e "./kb_mcp[write,gemini]"
+          pip install -e ./kb_importer
+          pip install -e ./kb_citations
+          pip install pytest
+
+      - name: Lint — package consistency
+        run: python scripts/check_package_consistency.py
+
+      - name: Lint — no secrets / personal info
+        run: python scripts/check_no_secrets.py
+
+      - name: Lint — no system-path autodetect
+        run: python scripts/check_no_system_paths.py
+
+      - name: Lint — cross-module + stdlib imports
+        run: python scripts/check_cross_module_imports.py
+
+      - name: Doc-sync gate
+        # Verifies VERSION is reflected in CHANGELOG and README;
+        # see scripts/check_docs_sync.py for the rules. Cheap;
+        # placed early so docs drift fails before slower steps
+        # (compile / unit / e2e) consume CI minutes.
+        run: python scripts/check_docs_sync.py
+
+      - name: Byte-compile every src/ tree
+        # Catches SyntaxError + import-time failures across all
+        # supported Python versions.
+        run: |
+          python -m compileall -q \
+            kb_core/src \
+            kb_write/src \
+            kb_mcp/src \
+            kb_importer/src \
+            kb_citations/src
+
+      - name: Unit tests — stdlib runner
+        # The repo's primary test runner. Exercises the same code
+        # paths CI users will hit.
+        run: python scripts/run_unit_tests.py
+
+      - name: Unit tests — real pytest
+        # Cross-check that the stdlib pytest-shim hasn't drifted
+        # from real pytest behaviour. We've already hit two diff
+        # points (pytest.approx, capsys) — this step makes sure
+        # the next one is caught in CI, not by a contributor.
+        run: pytest tests/unit/ -q
+
+      - name: E2E tests
+        run: python scripts/test_e2e.py
+
+  # Separate job, separate VM. Builds the release zip and uploads it
+  # as a 14-day artefact — matches `scripts/make_release.sh` locally.
+  # Doesn't run the slow post_install_test (which requires API keys
+  # to be meaningful); that's a release-time human gate.
+  release-zip:
+    runs-on: ubuntu-latest
+    needs: checks  # don't waste minutes if checks fail
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Build release zip
+        run: bash scripts/make_release.sh
+      - name: Upload zip as artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kb-tools-release-zip
+          path: dist/kb-tools-*.zip
+          if-no-files-found: error
+          retention-days: 14

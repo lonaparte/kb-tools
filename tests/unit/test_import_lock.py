@@ -44,12 +44,22 @@ class TestLockAcquire:
             assert data["pid"] == os.getpid()
             assert "started_at" in data
 
-    def test_lock_file_cleaned_after_release(self, kb):
+    def test_lock_file_truncated_but_kept_after_release(self, kb):
+        """1.4.2: import_lock no longer unlinks the lock file on
+        release. Pre-1.4.2, unlinking-after-flock-release introduced
+        a race where two processes could both flock the file and
+        both think they hold the lock (one flocks the just-unlinked
+        inode, the other creates a new inode). Now the file is
+        truncated to zero length but kept; flock state alone
+        determines who holds the lock. See import_lock.py for the
+        full timing diagram."""
         lock_path = kb / IMPORT_LOCK_REL
         with import_lock(kb):
             pass
-        # Best-effort unlink — file should be gone.
-        assert not lock_path.exists()
+        # File still exists (intentional — see docstring).
+        assert lock_path.exists()
+        # …but it's empty / no PID payload.
+        assert lock_path.stat().st_size == 0
 
 
 class TestLockContention:
