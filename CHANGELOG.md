@@ -5,6 +5,15 @@ All notable changes to ee-kb-tools.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is our own (calendar-ish, per-major-iteration).
 
+## [1.4.6] — 2026-04-25
+
+### Fixed
+- **`kb-citations link` JSONL fallback now atomic.** When DB write
+  fails and `fallback_jsonl=True`, citation-edges.jsonl is written
+  via tempfile + `os.replace`. Pre-1.4.6 a mid-loop interruption
+  left a half-populated file. Inlined helper `_atomic_write_text`
+  in linker.py (kb_citations doesn't dep on kb_write); 5 new tests.
+
 ## [1.4.5] — 2026-04-25
 
 ### Fixed

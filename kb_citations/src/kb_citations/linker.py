@@ -29,11 +29,40 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from .cache import CitationCache
 from .resolver import LocalResolver
+
+
+def _atomic_write_text(target: Path, content: str) -> None:
+    """Write `content` to `target` atomically — same shape as
+    `kb_write.atomic.atomic_write`, inlined here so kb_citations
+    doesn't take a hard dep on kb_write for one fallback path.
+    Writes to a sibling tempfile, fsyncs, then os.replace's onto
+    the target. Either fully old or fully new — never half.
+    """
+    target = Path(target)
+    parent = target.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{target.name}.", suffix=".tmp", dir=str(parent),
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_name, target)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except FileNotFoundError:
+            pass
+        raise
 
 
 log = logging.getLogger(__name__)
@@ -273,9 +302,15 @@ def link(
             cache = CitationCache(kb_root)
             cache.ensure_dirs()
             out_path = cache.root / "citation-edges.jsonl"
-            with open(out_path, "w", encoding="utf-8") as f:
-                for e in edges:
-                    f.write(json.dumps(e, ensure_ascii=False) + "\n")
+            # 1.4.6: atomic via tempfile + os.replace. Pre-1.4.6 the
+            # JSONL was streamed straight into `open(path, "w")`; if
+            # the process was interrupted mid-loop, the file was left
+            # half-populated — a downstream consumer reading that
+            # JSONL would silently see a truncated edge list.
+            payload = "".join(
+                json.dumps(e, ensure_ascii=False) + "\n" for e in edges
+            )
+            _atomic_write_text(out_path, payload)
             report.fallback_file = out_path
         elif not edges:
             # Nothing to write. DB failure is inconsequential; log at
