@@ -104,3 +104,51 @@ def test_builtin_fallbacks_when_neither_cli_nor_yaml(monkeypatch, tmp_path):
     assert ctx.max_cites == 200
     assert ctx.freshness_days == 30
     assert ctx.fetch_citations is False
+
+
+def test_yaml_partial_keys_use_builtin_for_missing(monkeypatch, tmp_path):
+    """YAML setting only some keys → others use the builtin default,
+    not whatever happened to be in the file's neighborhood."""
+    _yaml_config(monkeypatch, tmp_path, "max_refs: 500\n")
+    ctx = _build_ctx(_parse(["fetch"]))
+    assert ctx.max_refs == 500           # from YAML
+    assert ctx.max_cites == 200          # builtin
+    assert ctx.freshness_days == 30      # builtin
+    assert ctx.fetch_citations is False  # builtin
+
+
+def test_yaml_non_dict_top_level_ignored(monkeypatch, tmp_path):
+    """A YAML file that parses to a list / scalar instead of a
+    mapping must not crash _build_ctx. Warning is printed (we don't
+    assert the warning text — both runners would need a capture
+    fixture), builtin defaults applied."""
+    _yaml_config(monkeypatch, tmp_path, "- foo\n- bar\n")
+    ctx = _build_ctx(_parse(["fetch"]))
+    # Builtins regardless of the malformed top level.
+    assert ctx.max_refs == 1000
+    assert ctx.max_cites == 200
+    assert ctx.freshness_days == 30
+
+
+def test_yaml_malformed_does_not_crash(monkeypatch, tmp_path):
+    """Genuinely broken YAML: warn + fall back, don't propagate the
+    parse error to the user. Same shape as the existing 'could not
+    read' branch in _build_ctx."""
+    # Unmatched bracket — yaml.safe_load raises.
+    _yaml_config(monkeypatch, tmp_path, "max_refs: [1, 2,\n")
+    ctx = _build_ctx(_parse(["fetch"]))
+    # Falls back to builtins.
+    assert ctx.max_refs == 1000
+
+
+def test_unknown_yaml_keys_ignored(monkeypatch, tmp_path):
+    """Stray / future-version YAML keys must not crash the merge —
+    they're just unused."""
+    _yaml_config(monkeypatch, tmp_path, """\
+max_refs: 42
+totally_made_up_key: hello
+nested:
+  also_unknown: 7
+""")
+    ctx = _build_ctx(_parse(["fetch"]))
+    assert ctx.max_refs == 42
