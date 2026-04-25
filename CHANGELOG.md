@@ -5,6 +5,44 @@ All notable changes to ee-kb-tools.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning is our own (calendar-ish, per-major-iteration).
 
+## [1.4.4] — 2026-04-25
+
+Modest slimming pass — consolidate a handful of duplicated helpers
+that had drifted into 4 near-identical copies, drop one dead helper
+left behind by 1.4.2's `yaml.safe_dump` switch. Total: -58 lines
+across the toolchain (32653 → 32595). No behaviour change.
+
+### Refactored
+
+- **`positive_int` / `nonnegative_int` consolidated to
+  `kb_core.argtypes`.** The `_positive_int` argparse helper had
+  identical 13-line copies in `kb_write/commands/_shared.py`,
+  `kb_mcp/server_cli.py`, `kb_importer/commands/_shared.py`, and
+  `kb_citations/cli.py`. `_nonnegative_int` had two copies (kb-importer
+  + kb-citations). Now defined once in `kb_core.argtypes`; each
+  CLI re-imports under the underscore-prefixed local name so existing
+  call sites are unchanged. The shim/identity test
+  (`scripts/check_package_consistency.py`) still passes since the
+  duplicates are now the same object across packages.
+
+- **Dead `_yaml_escape()` removed from `kb_importer/longform.py`.**
+  Was the legacy hand-rolled escape used before 1.4.2 switched to
+  `yaml.safe_dump`. The function survived as unused code; only
+  reference remaining was a historical-context comment, which now
+  reads as historical. The duplicate copy in
+  `kb_write/ops/migrate_chapters.py:442` is still live (used by the
+  one-shot title-rename migration) and kept as-is.
+
+### Verification
+
+- 550 unit tests pass (stdlib runner + real pytest).
+- 46 e2e tests pass.
+- All 5 lints green: doc-sync, package-consistency, no-secrets,
+  cross-module-imports, no-system-paths.
+- The 4 cross-package `_positive_int` references are now `is`-identical
+  to `kb_core.argtypes.positive_int`; same for the 2 `_nonnegative_int`
+  references.
+
 ## [1.4.3] — 2026-04-25
 
 Audit-response wave 4: convert four 1.4.2 "warning + continue"

@@ -698,13 +698,3 @@ def _render_chapter_index(paper_key: str, outcome: LongformOutcome) -> str:
         f"`list_paper_parts('{paper_key}')` 列出全部章节。"
     )
     return "\n".join(lines) + "\n"
-
-
-# ----------------------------------------------------------------------
-# Small utilities
-# ----------------------------------------------------------------------
-
-
-def _yaml_escape(s: str) -> str:
-    """Escape a string for safe embedding in a double-quoted YAML scalar."""
-    return s.replace("\\", "\\\\").replace('"', '\\"')

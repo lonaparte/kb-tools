@@ -23,22 +23,9 @@ import logging
 import sys
 from pathlib import Path
 
+from kb_core.argtypes import positive_int as _positive_int  # noqa: F401
+
 from .embedding import SUPPORTED_PROVIDERS
-
-
-def _positive_int(value: str) -> int:
-    """argparse `type=` helper: accept positive ints, reject others."""
-    try:
-        n = int(value)
-    except (TypeError, ValueError):
-        raise argparse.ArgumentTypeError(
-            f"must be an integer, got {value!r}"
-        )
-    if n <= 0:
-        raise argparse.ArgumentTypeError(
-            f"must be positive, got {n}"
-        )
-    return n
 
 
 def _setup_logging(level: str) -> None:

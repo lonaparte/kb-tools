@@ -5,27 +5,13 @@ command module stay focused on its own argparse + dispatch code.
 """
 from __future__ import annotations
 
-import argparse
 import json
 import sys
 from pathlib import Path
 
+from kb_core.argtypes import positive_int as _positive_int  # noqa: F401
+
 from ..config import WriteContext, kb_root_from_env
-
-
-def _positive_int(value: str) -> int:
-    """argparse `type=` helper: accept positive ints, reject others."""
-    try:
-        n = int(value)
-    except (TypeError, ValueError):
-        raise argparse.ArgumentTypeError(
-            f"must be an integer, got {value!r}"
-        )
-    if n <= 0:
-        raise argparse.ArgumentTypeError(
-            f"must be positive, got {n}"
-        )
-    return n
 
 
 def _fmt_path(path: Path, kb_root: Path, *, absolute: bool) -> str:

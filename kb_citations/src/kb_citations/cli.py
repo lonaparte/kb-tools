@@ -15,52 +15,16 @@ import os
 import sys
 from pathlib import Path
 
+from kb_core.argtypes import (
+    positive_int as _positive_int,
+    nonnegative_int as _nonnegative_int,
+)
+
 from .cache import CitationCache
 from .config import CitationsContext, kb_root_from_env, find_workspace_config
 from .fetcher import build_provider, fetch_all
 from .linker import link as link_step
 from .resolver import LocalResolver
-
-
-def _positive_int(value: str) -> int:
-    """argparse `type=` helper: accept positive ints only.
-
-    Rejects negatives and zero with a clean ArgumentTypeError.
-    """
-    try:
-        n = int(value)
-    except (TypeError, ValueError):
-        raise argparse.ArgumentTypeError(
-            f"must be an integer, got {value!r}"
-        )
-    if n <= 0:
-        raise argparse.ArgumentTypeError(
-            f"must be positive, got {n}"
-        )
-    return n
-
-
-def _nonnegative_int(value: str) -> int:
-    """argparse `type=` helper: accept zero and positive ints.
-
-    0.29.4: used by --freshness-days, which documents 0 as
-    "force refetch" (the semantic is "skip if cache is newer
-    than N days" → N=0 means "never skip"). _positive_int
-    rejected it; they mismatched. Keep _positive_int for
-    --max-refs, --max-cites, --max-api-calls where 0 is
-    legitimately meaningless.
-    """
-    try:
-        n = int(value)
-    except (TypeError, ValueError):
-        raise argparse.ArgumentTypeError(
-            f"must be an integer, got {value!r}"
-        )
-    if n < 0:
-        raise argparse.ArgumentTypeError(
-            f"must be >= 0, got {n}"
-        )
-    return n
 
 
 def _parser() -> argparse.ArgumentParser:
