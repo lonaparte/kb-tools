@@ -227,7 +227,7 @@ kb-importer import papers --fulltext --longform-dryrun --only-key BOOKKEY1
 |-----------------------|---------------|-----------------|-------|
 | `gemini` (default) | `gemini-3.1-pro-preview` | `GEMINI_API_KEY` | Free tier ~1000 papers/day; daily-quota fallback on by default |
 | `openai` | `gpt-4o-mini` | `OPENAI_API_KEY` | |
-| `deepseek` | `deepseek-chat` | `DEEPSEEK_API_KEY` | Cheapest among direct-provider options |
+| `deepseek` | `deepseek/deepseek-v4-pro` | `DEEPSEEK_API_KEY` | Cheapest among direct-provider options |
 | `openrouter` | `openai/gpt-oss-120b:free` | `OPENROUTER_API_KEY` | Free-tier open-weight model (120B MoE, ~5B active). Capability meaningfully below paid GPT-4-class models; for important libraries override with `--fulltext-model google/gemini-2.5-flash` / `anthropic/claude-sonnet-4.5` / `openai/gpt-4o` etc. |
 
 **Note on RAG vs fulltext config**: this `--fulltext-provider`

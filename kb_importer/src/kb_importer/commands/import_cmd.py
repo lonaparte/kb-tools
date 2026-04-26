@@ -123,7 +123,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
         "--fulltext-model", default=None,
         help="Override default model for the chosen provider. "
              "Defaults: gemini→gemini-3.1-pro-preview, "
-             "openai→gpt-4o-mini, deepseek→deepseek-chat, "
+             "openai→gpt-4o-mini, deepseek→deepseek/deepseek-v4-pro, "
              "openrouter→openai/gpt-oss-120b:free (free-tier "
              "open-weight; capability may lag paid models — override "
              "for important libraries). "

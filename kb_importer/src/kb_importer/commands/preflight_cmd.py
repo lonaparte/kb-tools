@@ -45,7 +45,7 @@ def add_parser(subparsers) -> None:
         "--fulltext-model", default=None,
         help=(
             "Model to ping. Default: provider's import-default "
-            "(gemini-3.1-pro-preview / gpt-4o-mini / deepseek-chat "
+            "(gemini-3.1-pro-preview / gpt-4o-mini / deepseek/deepseek-v4-pro "
             "/ openai/gpt-oss-120b:free)."
         ),
     )
