@@ -252,7 +252,7 @@ class OpenAIChatProvider:
     - Any OpenAI-compatible gateway (Together, Groq, vLLM, ...)
 
     DeepSeek reuse: set base_url="https://api.deepseek.com/v1" and
-    model="deepseek-chat". Its `gpt-4o-mini`-equivalent pricing is
+    model="deepseek/deepseek-v4-pro". Its `gpt-4o-mini`-equivalent pricing is
     lower than OpenAI's; for summarization volume it saves real money.
 
     OpenRouter reuse: set base_url="https://openrouter.ai/api/v1"
@@ -738,7 +738,7 @@ def build_provider_from_env(
             raise SummarizerError("DEEPSEEK_API_KEY not set")
         return OpenAIChatProvider(
             api_key=key,
-            model=model or "deepseek-chat",
+            model=model or "deepseek/deepseek-v4-pro",
             base_url="https://api.deepseek.com/v1",
             name="deepseek",
         )
